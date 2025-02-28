@@ -13,12 +13,14 @@ function solve_normal_equations!(A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, b:
     return
 end
 
-#= Computes in place v = Pₐr where Pₐ is the orthogonal projector operator onto the null space of a matrix A
+##### Projections
+
+#= This method computes in place v = Pₐr where Pₐ is the orthogonal projector operator onto the null space of a matrix A
 Presented version does so by the normal equations approach, which involves the Cholesky factorization of AAᵀ
 =#
 
 function projection!(v::Vector{T}, A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
-    n = size(A,2)
+    m = size(A,1)
     w, y = Vector{T}(undef,m), Vector{T}(undef,m) # auxiliary vectors
 
     y[:] = chol_A.L \ (A*r)
@@ -26,14 +28,91 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, 
     v[:] = r - A'*w
     return
 end
+ 
+#= This method computes v = P̃ₐr where P̃ₐ is the orthogonal projection operator onto the set {x | 'Ax = 0'  and 'xᵢ = 0' for i ∈ 𝒜} =  {x | 'Bx = 0'} 
 
+* 'A' is a m × n matrix
+
+* 𝒜 ⊂ {1,...n} such that |𝒜| = p
+
+Uses the normal equations approach, which involves the Cholesky decomposition of 'B'.
+
+=#
+
+# The following two functions efficiently compute (hopefully), respectively, the matrix vector products Ãx and Ãᵀx and stores the result in y.
+function mul_A_tilde!(y::Vector{T}, A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
+
+    (m,_) = size(A)
+    @assert m+size(𝒜,1) == size(y,1)
+
+    mul!(y[1:m], A, x)
+    y[m+1:end] = x[𝒜]
+    return
+end
+
+
+function mul_A_tildeT!(y::Vector{T}, A::Matrix{T}, 𝒜::Vector{Int}, x::Vector) where T
+    (m,n) = size(A)
+    @assert n == size(y,1)
+
+    mul!(y,A',x[1:m]) # Aᵀ  component
+
+    # Zᵀ component
+    for (k,i) ∈ enumerate(𝒜)
+        y[i] += x[m+k]
+    end
+    return
+end
+
+# The following two functions efficiently compute (hopefully), respectively, the matrix vector products Ãx and Ãᵀx and return the result.
+function mul_A_tilde(A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
+    y = Vector{T}(undef, size(A,1)+size(𝒜,1))
+    mul_A_tilde!(y, A, 𝒜, x)
+    return y
+end
+
+function mul_A_tildeT(A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
+    y = Vector{T}(undef, size(A,2))
+    mul_A_tildeT!(y, A, 𝒜, x)
+    return y
+end
+
+function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int}, r::Vector{T}) where T
+    (m,n) = size(A)
+    p = size(𝒜)
+    mpp = m+p
+    @assert mpp < n 
+
+    # Auxiliary buffer arrays 
+    H = Matrix{T}(I,p,p)
+    chol_BBᵀ_L = LowerTriangular(Matrix{T}(undef, mpp, mpp))
+    
+
+    A_act_cols = view(A,:,𝒜)
+    G = chol_AAᵀ \ A_act_cols
+    mul!(H, G', G, -1, 1) # forms I - GᵀG
+    
+    # Forms the L factor of BBᵀ Cholesy decomposition
+    chol_BBᵀ_L[1:m,1:m] = chol_AAᵀ.L
+    chol_BBᵀ_L[m+1:end,1:m] = G'
+    chol_BBᵀ_L[m+1:end,p+1:end] = cholesky(H).L 
+
+    # Solves the normal equations to compute the orthogonal projection
+    y = chol_BBᵀ_L \ mul_A_tilde(A, 𝒜, r)
+    w = chol_BBᵀ_L' \ y 
+    v[:] = r - mul_A_tildeT(A, 𝒜, w)  
+    return
+end
+
+##### Conjugate gradient 
 
 #= Apply the projected conjugate gradient method with a starting point x
 Vector x is modified in place troughout the iterations =#
+
 function projected_cg!(x::Vector{T}, 
     H::Matrix{T}, c::Vector{T}, 
     A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}},
-    ϵ::T, max_iter::Int; 
+    ε::T, max_iter::Int; 
     verbose::Bool=false) where T
 
 (_,n) = size(A)
@@ -45,7 +124,7 @@ r[:] = H*x - c
 projection!(v, A, chol_A, r)
 rtv = vdot(r,v)
 p[:] = -v[:]
-terminated = abs(rtv) < ϵ
+terminated = abs(rtv) < ε
 iter = 1
 while !terminated
     mul!(Hp, H, p) 
@@ -59,7 +138,7 @@ while !terminated
     axpby!(-one(T), v, β, p)
     rtv = rtv_next
     iter += 1
-    terminated = iter > max_iter || abs(rtv) < ϵ
+    terminated = iter > max_iter || abs(rtv) < ε
     verbose && @show iter
 end
 return
@@ -73,7 +152,7 @@ Returns the solution x
 
 # Method with a given starting point
 function solve_quadratic(H::Matrix{T}, c::Vector{T}, A::Matrix{T}, b::Vector{T}, x0::Vector{T};
-    ϵ::T = T(1e-6), max_iter::Int=100, verbose::Bool=false) where T
+    ε::T = T(1e-6), max_iter::Int=100, verbose::Bool=false) where T
 
     (m,n) = size(A)
     x = Vector{T}(undef,n)
@@ -88,13 +167,13 @@ end
 Computes one by the normal equations approach =#
 
 function solve_quadratic(H::Matrix{T}, c::Vector{T}, A::Matrix{T}, b::Vector{T};
-    ϵ::T = T(1e-6), max_iter::Int=100, verbose::Bool=false) where T
+    ε::T = T(1e-6), max_iter::Int=100, verbose::Bool=false) where T
 
     (_,n) = size(A)
     x = Vector{T}(undef,n)
     chol_A = cholesky(A*A')
     solve_normal_equations!(A, chol_A, b, x)
-    projected_cg!(x,H,c,A,chol_A,ϵ,max_iter)
+    projected_cg!(x,H,c,A,chol_A,ε,max_iter)
 
     return x
 end
