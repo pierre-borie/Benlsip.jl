@@ -19,12 +19,12 @@ end
 Presented version does so by the normal equations approach, which involves the Cholesky factorization of AAᵀ
 =#
 
-function projection!(v::Vector{T}, A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
+function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
     m = size(A,1)
     w, y = Vector{T}(undef,m), Vector{T}(undef,m) # auxiliary vectors
 
-    y[:] = chol_A.L \ (A*r)
-    w[:] = chol_A.U \ y
+    y[:] = chol_AAᵀ.L \ (A*r)
+    w[:] = chol_AAᵀ.U \ y
     v[:] = r - A'*w
     return
 end
@@ -77,7 +77,9 @@ function mul_A_tildeT(A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
     return y
 end
 
-function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int}, r::Vector{T}) where T
+# Forms the cholesky decomposition of ÃÃᵀ
+
+function cholesky_aa_tilde(A::Matrix{T}, 𝒜::Vector{Int}, chol_AAᵀ::Cholesky{T,Matrix{T}}) where T
     (m,n) = size(A)
     p = size(𝒜)
     mpp = m+p
@@ -85,23 +87,39 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T
 
     # Auxiliary buffer arrays 
     H = Matrix{T}(I,p,p)
-    chol_BBᵀ_L = LowerTriangular(Matrix{T}(undef, mpp, mpp))
+    L = LowerTriangular(Matrix{T}(undef, mpp, mpp))
     
-
     A_act_cols = view(A,:,𝒜)
-    G = chol_AAᵀ \ A_act_cols
+    G = chol_AAᵀ.L \ A_act_cols
     mul!(H, G', G, -1, 1) # forms I - GᵀG
     
     # Forms the L factor of BBᵀ Cholesy decomposition
-    chol_BBᵀ_L[1:m,1:m] = chol_AAᵀ.L
-    chol_BBᵀ_L[m+1:end,1:m] = G'
-    chol_BBᵀ_L[m+1:end,p+1:end] = cholesky(H).L 
+    L[1:m,1:m] = chol_AAᵀ.L
+    L[m+1:end,1:m] = G'
+    L[m+1:end,p+1:end] = cholesky(H).L  
+    return Cholesky(L)
+end
+function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int}, r::Vector{T}) where T
+    (m,n) = size(A)
+    p = size(𝒜)
+    mpp = m+p
+    @assert mpp < n 
+
+    w, y = Vector{T}(undef,mpp), Vector{T}(undef,mpp) # auxiliary vectors
+    
 
     # Solves the normal equations to compute the orthogonal projection
-    y = chol_BBᵀ_L \ mul_A_tilde(A, 𝒜, r)
-    w = chol_BBᵀ_L' \ y 
+    y[:] = chol_BBᵀ.L \ mul_A_tilde(A, 𝒜, r)
+    w[:] = chol_BBᵀ.U \ y 
     v[:] = r - mul_A_tildeT(A, 𝒜, w)  
     return
+end
+
+function factor_to_boundary(p::Vector{T}, ℓ_bar::Vector{T}, u_bar::Vector{T}) where T
+    i_negp = [i for i ∈ axes(p,1) if p[i] < 0]
+    γ1 = minimum(ℓ_bar[i] for i ∈ i_negp)
+    γ2 = minimum(u_bar[i] for i ∈ setdiff(axes(p,1), i_negp))
+    return min(γ1, γ2)
 end
 
 ##### Conjugate gradient 
@@ -144,6 +162,57 @@ end
 return
 end
 
+function projected_cg!(x::Vector{T}, 
+    H::Matrix{T}, c::Vector{T}, 
+    A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int},
+    ℓ::Vector{T}, u::Vector{T}, Δ::T,
+    ε::T, max_iter::Int; 
+    verbose::Bool=false) where T
+
+    (_,n) = size(A)
+    r,v,p, Hp = Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n)
+
+    ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
+    u_bar = map(t -> min(t,Δ), u - x)
+    chol_ÃÃᵀ = cholesky_aa_tilde(A, 𝒜, chol_AAᵀ)
+
+    # Initialization
+
+    r[:] = H*x - c
+    projection!(v, A, chol_ÃÃᵀ, 𝒜, r)
+    rtv = vdot(r,v)
+    p[:] = -v[:]
+
+    bound_hit = false
+    terminated = abs(rtv) < ε
+    iter = 1
+
+    while !terminated
+        mul!(Hp, H, p) 
+        α = rtv / dot(p,Hp)
+
+        # Distance to boundary
+        
+        γ = factor_to_boundary(p, ℓ_bar, u_bar)
+        bound_hit = α > γ
+
+        if bound_hit
+            axpy!(γ,p,x)
+        else 
+            axpy!(α,p,x)
+            axpy!(α,Hp,r)
+            projection!(v, A, chol_ÃÃᵀ, 𝒜, r)
+            rtv_next = dot(r,v)
+            β = rtv_next / rtv
+            axpby!(-one(T), v, β, p)
+            rtv = rtv_next
+        end
+        iter += 1
+        terminated = abs(rtv) < ε || bound_hit || iter > max_iter
+        verbose && @show iter
+    end
+    return
+end
 #= Solve minₓ xᵀHx/2 - cᵀx s.t. Ax = b
 with H ≻ 0
 by the projected conjugate gradient method (unpreconditionned version).
