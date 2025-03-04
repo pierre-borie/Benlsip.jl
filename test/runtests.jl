@@ -1,6 +1,6 @@
-using BEnlsip
+using BEnlsip, LinearAlgebra
 using Test
 
 @testset "BEnlsip.jl" begin
-    # Write your tests here.
+    include("projection.jl")
 end

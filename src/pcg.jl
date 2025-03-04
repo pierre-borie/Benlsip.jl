@@ -13,22 +13,7 @@ function solve_normal_equations!(A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, b:
     return
 end
 
-##### Projections
 
-#= This method computes in place v = Pₐr where Pₐ is the orthogonal projector operator onto the null space of a matrix A
-Presented version does so by the normal equations approach, which involves the Cholesky factorization of AAᵀ
-=#
-
-function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
-    m = size(A,1)
-    w, y = Vector{T}(undef,m), Vector{T}(undef,m) # auxiliary vectors
-
-    y[:] = chol_AAᵀ.L \ (A*r)
-    w[:] = chol_AAᵀ.U \ y
-    v[:] = r - A'*w
-    return
-end
- 
 #= This method computes v = P̃ₐr where P̃ₐ is the orthogonal projection operator onto the set {x | 'Ax = 0'  and 'xᵢ = 0' for i ∈ 𝒜} =  {x | 'Bx = 0'} 
 
 * 'A' is a m × n matrix
@@ -45,7 +30,7 @@ function mul_A_tilde!(y::Vector{T}, A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T
     (m,_) = size(A)
     @assert m+size(𝒜,1) == size(y,1)
 
-    mul!(y[1:m], A, x)
+    mul!(view(y,1:m), A, x)
     y[m+1:end] = x[𝒜]
     return
 end
@@ -81,7 +66,7 @@ end
 
 function cholesky_aa_tilde(A::Matrix{T}, 𝒜::Vector{Int}, chol_AAᵀ::Cholesky{T,Matrix{T}}) where T
     (m,n) = size(A)
-    p = size(𝒜)
+    p = size(𝒜,1)
     mpp = m+p
     @assert mpp < n 
 
@@ -99,9 +84,30 @@ function cholesky_aa_tilde(A::Matrix{T}, 𝒜::Vector{Int}, chol_AAᵀ::Cholesky
     L[m+1:end,p+1:end] = cholesky(H).L  
     return Cholesky(L)
 end
+
+##### Projections
+
+#= Function projection! computes the orthogonal projection of a vector r onto a polyhedral set and stores the result in vector v
+Presented version does so by the normal equations approach, which involves the Cholesky factorization of AAᵀ
+
+For the first method, the projection lies in the null space of a matrix A
+
+=#
+
+function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
+    m = size(A,1)
+    w, y = Vector{T}(undef,m), Vector{T}(undef,m) # auxiliary vectors
+
+    y[:] = chol_AAᵀ.L \ (A*r)
+    w[:] = chol_AAᵀ.U \ y
+    v[:] = r - A'*w
+    return
+end
+ 
+
 function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int}, r::Vector{T}) where T
     (m,n) = size(A)
-    p = size(𝒜)
+    p = size(𝒜,1)
     mpp = m+p
     @assert mpp < n 
 
