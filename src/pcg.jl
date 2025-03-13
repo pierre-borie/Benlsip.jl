@@ -13,7 +13,6 @@ function solve_normal_equations!(A::Matrix{T}, chol_A::Cholesky{T,Matrix{T}}, b:
     return
 end
 
-
 #= This method computes v = P̃ₐr where P̃ₐ is the orthogonal projection operator onto the set {x | 'Ax = 0'  and 'xᵢ = 0' for i ∈ 𝒜} =  {x | 'Bx = 0'} 
 
 * 'A' is a m × n matrix
@@ -25,48 +24,48 @@ Uses the normal equations approach, which involves the Cholesky decomposition of
 =#
 
 # The following two functions efficiently compute (hopefully), respectively, the matrix vector products Ãx and Ãᵀx and stores the result in y.
-function mul_A_tilde!(y::Vector{T}, A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
+function mul_A_tilde!(y::Vector{T}, A::Matrix{T}, fix_bounds::Vector{Int}, x::Vector{T}) where T
 
     (m,_) = size(A)
-    @assert m+size(𝒜,1) == size(y,1)
+    @assert m+size(fix_bounds,1) == size(y,1)
 
     mul!(view(y,1:m), A, x)
-    y[m+1:end] = x[𝒜]
+    y[m+1:end] = x[fix_bounds]
     return
 end
 
 
-function mul_A_tildeT!(y::Vector{T}, A::Matrix{T}, 𝒜::Vector{Int}, x::Vector) where T
+function mul_A_tildeT!(y::Vector{T}, A::Matrix{T}, fix_bounds::Vector{Int}, x::Vector) where T
     (m,n) = size(A)
     @assert n == size(y,1)
 
     mul!(y,A',x[1:m]) # Aᵀ  component
 
     # Zᵀ component
-    for (k,i) ∈ enumerate(𝒜)
+    for (k,i) ∈ enumerate(fix_bounds)
         y[i] += x[m+k]
     end
     return
 end
 
 # The following two functions efficiently compute (hopefully), respectively, the matrix vector products Ãx and Ãᵀx and return the result.
-function mul_A_tilde(A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
-    y = Vector{T}(undef, size(A,1)+size(𝒜,1))
-    mul_A_tilde!(y, A, 𝒜, x)
+function mul_A_tilde(A::Matrix{T}, fix_bounds::Vector{Int}, x::Vector{T}) where T
+    y = Vector{T}(undef, size(A,1)+size(fix_bounds,1))
+    mul_A_tilde!(y, A, fix_bounds, x)
     return y
 end
 
-function mul_A_tildeT(A::Matrix{T}, 𝒜::Vector{Int}, x::Vector{T}) where T
+function mul_A_tildeT(A::Matrix{T}, fix_bounds::Vector{Int}, x::Vector{T}) where T
     y = Vector{T}(undef, size(A,2))
-    mul_A_tildeT!(y, A, 𝒜, x)
+    mul_A_tildeT!(y, A, fix_bounds, x)
     return y
 end
 
 # Forms the cholesky decomposition of ÃÃᵀ
 
-function cholesky_aa_tilde(A::Matrix{T}, 𝒜::Vector{Int}, chol_AAᵀ::Cholesky{T,Matrix{T}}) where T
+function cholesky_aug_aat(A::Matrix{T}, fix_bounds::Vector{Int}, chol_AAᵀ::Cholesky{T,Matrix{T}}) where T
     (m,n) = size(A)
-    p = size(𝒜,1)
+    p = size(fix_bounds,1)
     mpp = m+p
     @assert mpp < n 
 
@@ -74,7 +73,7 @@ function cholesky_aa_tilde(A::Matrix{T}, 𝒜::Vector{Int}, chol_AAᵀ::Cholesky
     H = Matrix{T}(I,p,p)
     L = LowerTriangular(Matrix{T}(undef, mpp, mpp))
     
-    A_act_cols = view(A,:,𝒜)
+    A_act_cols = view(A,:,fix_bounds)
     G = chol_AAᵀ.L \ A_act_cols
     mul!(H, G', G, -1, 1) # forms I - GᵀG
     
@@ -105,9 +104,9 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T
 end
  
 
-function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int}, r::Vector{T}) where T
+function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
     (m,n) = size(A)
-    p = size(𝒜,1)
+    p = size(fix_bounds,1)
     mpp = m+p
     @assert mpp < n 
 
@@ -115,9 +114,9 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T
     
 
     # Solves the normal equations to compute the orthogonal projection
-    y[:] = chol_BBᵀ.L \ mul_A_tilde(A, 𝒜, r)
+    y[:] = chol_BBᵀ.L \ mul_A_tilde(A, fix_bounds, r)
     w[:] = chol_BBᵀ.U \ y 
-    v[:] = r - mul_A_tildeT(A, 𝒜, w)  
+    v[:] = r - mul_A_tildeT(A, fix_bounds, w)  
     return
 end
 
@@ -139,53 +138,56 @@ function projected_cg!(x::Vector{T},
     ε::T, max_iter::Int; 
     verbose::Bool=false) where T
 
-(_,n) = size(A)
-r,v,p, Hp = Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n)
-
-# Initialization
-
-r[:] = H*x - c
-projection!(v, A, chol_A, r)
-rtv = vdot(r,v)
-p[:] = -v[:]
-terminated = abs(rtv) < ε
-iter = 1
-while !terminated
-    mul!(Hp, H, p) 
-    α = rtv / dot(p,Hp)
-    axpy!(α,p,x)
-    axpy!(α,Hp,r)
-    projection!(v, A, chol_A, r)
-    verbose && @show A*v
-    rtv_next = dot(r,v)
-    β = rtv_next / rtv
-    axpby!(-one(T), v, β, p)
-    rtv = rtv_next
-    iter += 1
-    terminated = iter > max_iter || abs(rtv) < ε
-    verbose && @show iter
-end
-return
-end
-
-function projected_cg!(x::Vector{T}, 
-    H::Matrix{T}, c::Vector{T}, 
-    A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, 𝒜::Vector{Int},
-    ℓ::Vector{T}, u::Vector{T}, Δ::T,
-    ε::T, max_iter::Int; 
-    verbose::Bool=false) where T
-
     (_,n) = size(A)
     r,v,p, Hp = Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n)
-
-    ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
-    u_bar = map(t -> min(t,Δ), u - x)
-    chol_ÃÃᵀ = cholesky_aa_tilde(A, 𝒜, chol_AAᵀ)
-
+    
     # Initialization
 
     r[:] = H*x - c
-    projection!(v, A, chol_ÃÃᵀ, 𝒜, r)
+    projection!(v, A, chol_A, r)
+    rtv = vdot(r,v)
+    p[:] = -v[:]
+    terminated = abs(rtv) < ε
+    iter = 1
+    while !terminated
+        mul!(Hp, H, p) 
+        α = rtv / dot(p,Hp)
+        axpy!(α,p,x)
+        axpy!(α,Hp,r)
+        projection!(v, A, chol_A, r)
+        verbose && @show A*v
+        rtv_next = dot(r,v)
+        β = rtv_next / rtv
+        axpby!(-one(T), v, β, p)
+        rtv = rtv_next
+        iter += 1
+        terminated = iter > max_iter || abs(rtv) < ε
+        verbose && @show iter
+    end
+    return
+end
+
+function projected_cg!(x::Vector{T}, 
+                       H::Matrix{T},
+                       c::Vector{T}, 
+                       A::Matrix{T},
+                       chol_AAᵀ::Cholesky{T,Matrix{T}},
+                       chol_aug_aat::Cholesky{T,Matrix{T}},
+                       fix_bounds::Vector{Int},
+                       ℓ_bar::Vector{T},
+                       u_bar::Vector{T},
+                       Δ::T,
+                       ε::T,
+                       max_iter::Int; 
+                       verbose::Bool=false) where T
+
+    (_,n) = size(A)
+    r,v,p, Hp = Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n)
+    
+    # Initialization
+
+    r[:] = H*x - c
+    projection!(v, A, chol_aug_aat, fix_bounds, r)
     rtv = vdot(r,v)
     p[:] = -v[:]
 
@@ -207,7 +209,7 @@ function projected_cg!(x::Vector{T},
         else 
             axpy!(α,p,x)
             axpy!(α,Hp,r)
-            projection!(v, A, chol_ÃÃᵀ, 𝒜, r)
+            projection!(v, A, chol_aug_aat, fix_bounds, r)
             rtv_next = dot(r,v)
             β = rtv_next / rtv
             axpby!(-one(T), v, β, p)
