@@ -1,5 +1,11 @@
 #= TRALCLSS stands for Trust Region Augmented Lagrangian Constrainted Least Squares Solver =#
 
+
+function tralclss()
+    return
+end
+
+
 function minor_iterate(x::Vector{T},
                        w::Vector{T},
                        H::Matrix{T},
@@ -22,4 +28,21 @@ function minor_iterate(x::Vector{T},
     projected_cg!(w,H,c,A,chol_AAᵀ, chol_aug_aat, fix_bounds, ℓ_bar, u_bar, Δ, ε, max_iter)
 
     axpy!(-1,x,w) # minor step
+    β = projected_search(w)
+
+    # Update minor iterate
+    axpy!(β,w,x)
+    return
+end
+
+#= Projected search along the minor step w=#
+function projected_search(w::Vector{T}) where T
+    β = one(T)
+    return β
+end
+
+#= Compute Cauchy point, that is also the first minor iterate =#
+
+function cauchy_point!(x::Vector)
+    return
 end
