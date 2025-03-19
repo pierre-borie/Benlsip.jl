@@ -43,6 +43,37 @@ end
 
 #= Compute Cauchy point, that is also the first minor iterate =#
 
-function cauchy_point!(x::Vector)
+function cauchy_point!(x::Vector{T},
+                       ∇f::Vector{T},
+                       H::Matrix{T},
+                       A::Matrix{T},
+                       chol_AAᵀ::Cholesky{T,Matrix{T}},
+                       ℓ::Vector{T},
+                       u::Vector{T},
+                       Δ::T,
+                       verbose::Bool=false) where T
+    (m,n) = size(A)
+    d = Vector{T}(undef,n)
+
+    # Orthogonal projection of ∇f onto the null space of A
+    projection!(v,A,chol_AAᵀ,∇f)
+    ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
+    u_bar = map(t -> min(t,Δ), u - x)
+
+    t_b = break_points(d, ℓ_bar, u_bar)
     return
+end
+
+function break_points(d::Vector{T},l::Vector{T},u::Vector{T})
+    @assert all(<(0),l) && all(>(0),u) "Upper and lower bounds must be of opposite sign"
+    
+    t_b = zeros(size(d,1))
+    for i ∈ axes(d,1)
+        if d[i] < 0
+            t_b[i] = l/d[i]
+        elseif d[i] > 0
+            t_b[i] = u/d[i]
+        end
+    end
+    return t_b
 end
