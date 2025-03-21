@@ -15,7 +15,7 @@
 
     v = zeros(n)
     chol_aa = cholesky(A*A')
-    chol_bb = BEnlsip.cholesky_aa_tilde(A,ifix, chol_aa)
+    chol_bb = BEnlsip.cholesky_aug_aat(A,ifix, chol_aa)
 
 
     BEnlsip.projection!(v,A,chol_bb,ifix,x_hs)
