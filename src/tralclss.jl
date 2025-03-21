@@ -44,6 +44,7 @@ end
 #= Compute Cauchy point, that is also the first minor iterate =#
 
 function cauchy_point!(x::Vector{T},
+                       s_gc::Vector{T},
                        ∇f::Vector{T},
                        H::Matrix{T},
                        A::Matrix{T},
@@ -53,22 +54,22 @@ function cauchy_point!(x::Vector{T},
                        Δ::T,
                        verbose::Bool=false) where T
     (m,n) = size(A)
-    d = Vector{T}(undef,n)
-
+    zero_T = zero(T)
+    # Buffer initialization
+    s_i, e_i = zeros(T,n), zeros(T,n)
+    d, d_i, Hdi = Vector{T}(undef,n), Vector{T}(undef,n), Vector{T}(undef,n)
+    
     # Orthogonal projection of ∇f onto the null space of A
-    projection!(v,A,chol_AAᵀ,∇f)
+    projection!(d,A,chol_AAᵀ,∇f)
+    d_i[:] = d[:]
     ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
     u_bar = map(t -> min(t,Δ), u - x)
 
     # Breakpoints
     t_b, t_b_sorted = break_points(d, ℓ_bar, u_bar)
 
-    # Buffer initialization
-    s_i, e_i = zeros(T,n), zeros(T,n)
-    d_i, Hdi = Vector{T}(undef,n), Vector{T}(undef,n)
-    s_gc = Vector{T}(undef,n)
-
-    for j in filter(j -> !iszero(t_b[j]), axes(t_b,1))
+    t_i = zero_T
+    for j in findall(isapprox(t_i),t_b)
         e_i[j] = d[j]
     end
     axpy!(-1,e_i,d_i)
@@ -76,42 +77,40 @@ function cauchy_point!(x::Vector{T},
     gtdi = dot(∇f,d_i)
     mul!(Hdi,H,d_i)
 
-    t_i = pop!(t_b_sorted)
-    optimal = false
-    while !optimal || !isempty(t_b_sorted)
+    minima_found = false
+    while !minima_found || !isempty(t_b_sorted)
 
         # Slope and curvature
-        qi_p = gtdi +dot(s_i,Hdi)
+        qi_p = gtdi + dot(s_i,Hdi)
         qi_pp = dot(d_i,Hdi)
-        Δt = (approx(zero(T))(qi_pp) ? zero(T) : -qi_p / qi_pp)
-        t_ip1 = pop!(t_b_sorted)
+        Δt = (approx(zero_T)(qi_pp) ? zero_T : -qi_p / qi_pp)
+        t_ip1 = popfirst!!(t_b_sorted)
 
         if qi_p ≥ 0
             s_gc[:] = s_i[:]
-            optimal = true
-        elseif qi_pp > 0 && Δt > t_ip1 - t_ip1
+            minima_found = true
+        elseif qi_pp > 0 && Δt > t_ip1 - t_i
             s_gc[:] = s_i + Δt*d_i[:]
-            optimal = true
+            minima_found = true
         else # Prepare for the next interval
-            j_break = findall(isapprox(t_i),t_b)
+            j_break = findall(isapprox(t_ip1),t_b)
             Δt = t_ip1 - t_ip
             axpy!(Δt,d_i,s_i)
-            e_i[:] = [(j in j_break ? d_i[j] : zero(T)) for j=1:n]
+            e_i[:] = [(j in j_break ? d[j] : zero_T) for j=1:n]
             axpy(-1,e_i,d_i)
-
             # Update gᵀd and Hd
             gtdi -= dot(∇f,e_i)
             mul!(Hdi,H,e_i,-1,1)
         end
     end
-
+    
     return
 end
 
-function break_points(d::Vector{T},l::Vector{T},u::Vector{T})
+function break_points(d::Vector{T},l::Vector{T},u::Vector{T}) where T
     @assert all(<(0),l) && all(>(0),u) "Upper and lower bounds must be of opposite sign"
     
-    t_b = zeros(size(d,1))
+    t_b = zeros(T, size(d,1))
     for i ∈ axes(d,1)
         if d[i] < 0
             t_b[i] = l/d[i]
@@ -121,6 +120,8 @@ function break_points(d::Vector{T},l::Vector{T},u::Vector{T})
     end
     # Ordered values
     t_b_sorted = sort(unique(t_b))
+    filter(!isapprox(zero(T),t_b_sorted))  # Get rid of zero value breakpoint for convenience
+    
     return t_b, t_b_sorted
 end
 
