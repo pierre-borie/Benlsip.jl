@@ -64,7 +64,7 @@ function cauchy_point!(x::Vector{T},
     t_b, t_b_sorted = break_points(d, ℓ_bar, u_bar)
 
     # Buffer initialization
-    s_i, e_i = zeros(T,n), zeros(T,n), zeros(T,n)
+    s_i, e_i = zeros(T,n), zeros(T,n)
     d_i, Hdi = Vector{T}(undef,n), Vector{T}(undef,n)
     s_gc = Vector{T}(undef,n)
 
@@ -83,7 +83,7 @@ function cauchy_point!(x::Vector{T},
         # Slope and curvature
         qi_p = gtdi +dot(s_i,Hdi)
         qi_pp = dot(d_i,Hdi)
-        Δt = (iszero(qi_pp) ? zero(T) : -qi_p / qi_pp)
+        Δt = (approx(zero(T))(qi_pp) ? zero(T) : -qi_p / qi_pp)
         t_ip1 = pop!(t_b_sorted)
 
         if qi_p ≥ 0
@@ -93,9 +93,16 @@ function cauchy_point!(x::Vector{T},
             s_gc[:] = s_i + Δt*d_i[:]
             optimal = true
         else # Prepare for the next interval
-            j_break = findall(isequal(t_i))
-        end
+            j_break = findall(isapprox(t_i),t_b)
+            Δt = t_ip1 - t_ip
+            axpy!(Δt,d_i,s_i)
+            e_i[:] = [(j in j_break ? d_i[j] : zero(T)) for j=1:n]
+            axpy(-1,e_i,d_i)
 
+            # Update gᵀd and Hd
+            gtdi -= dot(∇f,e_i)
+            mul!(Hdi,H,e_i,-1,1)
+        end
     end
 
     return
