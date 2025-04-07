@@ -1,11 +1,23 @@
 #= TRALCLSS stands for Trust Region Augmented Lagrangian Constrainted Least Squares Solver =#
 
 
-function tralclss()
+function tralclss(x0::Vector{T},
+                  λ0::Vector{T},
+                  μ::T) where T
     return
 end
 
 
+#= Solves the sub problem of an outer iteration
+Approximately minimize the Augmented Lagrangian function with respect to the primal variable with tolerance ω > 0=#
+function inner_iteration(x0::Vector{T},
+                         ) where T
+    return
+end
+
+
+#= Compute a minor iterate
+First compute a descent direction by approximately applying the conjugate gradient method =# 
 function minor_iterate(x::Vector{T},
                        w::Vector{T},
                        H::Matrix{T},
@@ -25,14 +37,14 @@ function minor_iterate(x::Vector{T},
     ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
     u_bar = map(t -> min(t,Δ), u - x)
     chol_aug_aat = cholesky_aug_aat(A, fix_bounds, chol_AAᵀ)
-    projected_cg!(w,H,c,A,chol_AAᵀ, chol_aug_aat, fix_bounds, ℓ_bar, u_bar, Δ, ε, max_iter)
+    pcg_status = projected_cg!(w,H,c,A,chol_AAᵀ, chol_aug_aat, fix_bounds, ℓ_bar, u_bar, Δ, ε, max_iter)
 
     axpy!(-1,x,w) # minor step
-    β = projected_search(w)
+    α = projected_search(w)
 
     # Update minor iterate
-    axpy!(β,w,x)
-    return
+    axpy!(α,w,x)
+    return pcg_status
 end
 
 #= Projected search along the minor step w=#
@@ -41,7 +53,7 @@ function projected_search(w::Vector{T}) where T
     return β
 end
 
-#= Compute Cauchy point, that is also the first minor iterate =#
+#= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path =#
 
 function cauchy_point!(x::Vector{T},
                        s_gc::Vector{T},

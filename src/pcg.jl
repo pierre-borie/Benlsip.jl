@@ -192,10 +192,10 @@ function projected_cg!(x::Vector{T},
     p[:] = -v[:]
 
     bound_hit = false
-    terminated = abs(rtv) < ε
+    stationary = abs(rtv) < ε
     iter = 1
 
-    while !terminated
+    while !(stationary || bound_hit || max_iter_reached)
         mul!(Hp, H, p) 
         α = rtv / dot(p,Hp)
 
@@ -216,10 +216,21 @@ function projected_cg!(x::Vector{T},
             rtv = rtv_next
         end
         iter += 1
-        terminated = abs(rtv) < ε || bound_hit || iter > max_iter
+
+        stationary = abs(rtv) < ε
+        max_iter_reached = iter > max_iter
         verbose && @show iter
     end
-    return
+
+    status = if stationary
+        :stationary
+    elseif bound_hit
+        :bound_hit
+    elseif
+        max_iter_reached
+        :max_iter_reached
+    end
+    return status
 end
 #= Solve minₓ xᵀHx/2 - cᵀx s.t. Ax = b
 with H ≻ 0
