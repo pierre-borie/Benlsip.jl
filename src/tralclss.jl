@@ -95,8 +95,8 @@ function cauchy_point!(x::Vector{T},
         # Slope and curvature
         qi_p = gtdi + dot(s_i,Hdi)
         qi_pp = dot(d_i,Hdi)
-        Δt = (approx(zero_T)(qi_pp) ? zero_T : -qi_p / qi_pp)
-        t_ip1 = popfirst!!(t_b_sorted)
+        Δt = (isapprox(zero_T)(qi_pp) ? zero_T : -qi_p / qi_pp)
+        t_ip1 = popfirst!(t_b_sorted)
 
         if qi_p ≥ 0
             s_gc[:] = s_i[:]

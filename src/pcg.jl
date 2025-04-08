@@ -226,8 +226,7 @@ function projected_cg!(x::Vector{T},
         :stationary
     elseif bound_hit
         :bound_hit
-    elseif
-        max_iter_reached
+    elseif max_iter_reached
         :max_iter_reached
     end
     return status
