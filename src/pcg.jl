@@ -86,25 +86,20 @@ end
 
 ##### Projections
 
-#= Function projection! computes the orthogonal projection of a vector r onto a polyhedral set and stores the result in vector v
-Presented version does so by the normal equations approach, which involves the Cholesky factorization of AAᵀ
 
-For the first method, the projection lies in the null space of a matrix A
 
-=#
-
-function projection!(v::Vector{T}, A::Matrix{T}, chol_AAᵀ::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
+function projection!(v::Vector{T}, A::Matrix{T}, chol_aat::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
     m = size(A,1)
     w, y = Vector{T}(undef,m), Vector{T}(undef,m) # auxiliary vectors
 
-    y[:] = chol_AAᵀ.L \ (A*r)
-    w[:] = chol_AAᵀ.U \ y
+    y[:] = chol_aat.L \ (A*r)
+    w[:] = chol_aat.U \ y
     v[:] = r - A'*w
     return
 end
  
 
-function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
+function projection!(v::Vector{T}, A::Matrix{T}, chol_aug_mat::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
     (m,n) = size(A)
     p = size(fix_bounds,1)
     mpp = m+p
@@ -114,10 +109,58 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_BBᵀ::Cholesky{T,Matrix{T
     
 
     # Solves the normal equations to compute the orthogonal projection
-    y[:] = chol_BBᵀ.L \ mul_A_tilde(A, fix_bounds, r)
-    w[:] = chol_BBᵀ.U \ y 
+    y[:] = chol_aug_mat.L \ mul_A_tilde(A, fix_bounds, r)
+    w[:] = chol_aug_mat.U \ y 
     v[:] = r - mul_A_tildeT(A, fix_bounds, w)  
     return
+end
+
+# out-of-place versions of the above methods
+"""
+    projection(A, chol_aat, r)
+
+Compute the projection of vector 'r' onto the null space of matrix 'A'.
+
+More precisely, solves the normal equations associated to the problem 'minᵥ {||v-r|| | Av = 0}' using the Cholesky factorization of 'AAᵀ'.
+"""
+function projection(A::Matrix{T}, chol_aat::Cholesky{T,Matrix{T}}, r::Vector{T}) where T
+    v = Vector{T}(undef,size(r,1))
+    projection!(v,A,chol_aat,r)
+    return v
+end
+
+"""
+    projection(A, chol_aat, fix_bounds, r)
+
+Compute the projection of vector 'r' onto the null space of matrix 'A' with some components fixed to 0.
+
+More precisely, solves the normal equations associated to the problem 'minᵥ {||v-r|| | Av = 0, vᵢ = 0 for i ∈ fix_bounds}' using the Cholesky factorization of an augmented matrix.
+"""
+function projection(A::Matrix{T}, chol_aug_mat::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
+    v = Vector{T}(undef,size(r,1))
+    projection!(v,A,chol_aug_mat,fix_bounds,r)
+    return v 
+end
+
+"""
+    function projection_polyhedron(x,A,b,l,u;solver)
+
+Compute the projection of vector 'x' onto the polyhedron '{v | Av = b, l ≤ v ≤ u}' by solving the associated minimum-distance quadratic program.
+
+The default solver is 'Ipopt'.
+"""
+function projection_polyhedron(x::Vectort{T}, A::Matrix{T}, b::Vector{T}, l::Vector{T}, u::Vector{T}; solver = Ipopt.Optimizer)
+    n = size(x,1)
+    model = Model(solver)
+    set_silent(model)
+    set_attribute(model, "hessian_constant", "yes") # Option to make Ipopt assume it is a QP
+
+    @variable(model, l[i] <= v[i=1:n] <= u[i])
+    @constraint(model, A*v .== b)
+    @objective(model, Min, dot(v-x,v-x))
+    optimize!(model)
+
+    return value.(v)
 end
 
 function factor_to_boundary(p::Vector{T}, ℓ_bar::Vector{T}, u_bar::Vector{T}) where T
@@ -126,6 +169,7 @@ function factor_to_boundary(p::Vector{T}, ℓ_bar::Vector{T}, u_bar::Vector{T}) 
     γ2 = minimum(u_bar[i] for i ∈ setdiff(axes(p,1), i_negp))
     return min(γ1, γ2)
 end
+ 
 
 ##### Conjugate gradient 
 

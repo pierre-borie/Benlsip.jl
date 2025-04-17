@@ -53,8 +53,9 @@ function projected_search(w::Vector{T}) where T
     return β
 end
 
-#= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path =#
+#= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path 
 
+DOES NOT WORK 
 function cauchy_point!(x::Vector{T},
                        s_gc::Vector{T},
                        ∇f::Vector{T},
@@ -137,4 +138,4 @@ function break_points(d::Vector{T},l::Vector{T},u::Vector{T}) where T
     return t_b, t_b_sorted
 end
 
-
+=#

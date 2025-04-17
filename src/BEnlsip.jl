@@ -1,10 +1,10 @@
 module BEnlsip
 
 # Packages
-using LinearAlgebra
+using LinearAlgebra, JuMP, Ipopt
 
 # Files
-for f in ["pcg"]
+for f in ["pcg", "tralclss"]
     include("./$f.jl")
 end
 
