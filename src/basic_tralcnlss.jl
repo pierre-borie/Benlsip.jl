@@ -1,9 +1,95 @@
-#= TRALCLSS stands for Trust Region Augmented Lagrangian Constrainted Least Squares Solver =#
+#= Structure and methods associated to the augmented Lagrangian
 
+Contains
+- evaluation of the objective 
+- evaluation of the gradient 
+- evaluation of the Gauss-Newton approximation of the Hessian
+=#
+
+mutable struct AugmentedLagrangian{T} where T
+    residuals::Function
+    nlconstraints::Function
+    mu::T
+end
+
+function al_obj(x::Vector{T}, 
+    y::Vector{T}, 
+    al::AugmentedLagrangian{T}) where T 
+
+    rx, cx = al.residuals(x), al.nlconstraints
+    return 0.5*dot(rx,rx) + dot(y,cx) + 0.5*mu*dot(cx,cx)
+end 
+
+function al_gradient(x::Vector{T}, 
+    al::AugmentedLagrangian{T},
+    jac_res::Function, 
+    jac_nlcons::Function)
+
+    rx,cx  = al.residuals(x), al.nlconstraints(x)
+    Jx, Cx  = jac_res(x), jac_nlcons(x)
+    y_bar = y + al.mu*cx
+
+    return Jx'*rx + Cx'*y_bar
+end
+
+function al_gn_hessian(x::Vector{T}, 
+    al::AugmentedLagrangian{T},
+    jac_res::Function, 
+    jac_nlcons::Function)
+
+    Jx, Cx  = jac_res(x), jac_nlcons(x)
+
+    return Jx'*Jx + al.mu*Cx'*Cx
+end
+
+#### The solver 
+
+### Constraints relatite methods
+
+function is_feasible(x::Vector{T}, A::Matrix{T}, x_l::Vector{T}, x_u::Vector{T})
+
+    return isapprox(A*x,b) && all(x_l .<= x) && all(x .<= x_u)
+end
+
+### Tolerances relative methods
+function initial_tolerances(mu::T,
+    omega0::T,
+    eta0::T,
+    k_crit::T,
+    k_feas::T,)
+
+    omega = omega0 * mu ^ (-k_crit)
+    eta = eta0 * mu ^ (-k_feas)
+    return omega, eta
+end
+
+#= TRALCNLSS stands for Trust Region Augmented Lagrangian Constrainted Nonlinear Least Squares Solver =#
 
 function tralclss(x0::Vector{T},
-                  λ0::Vector{T},
-                  μ::T) where T
+    y0::Vector{T},
+    residuals::Function,
+    jac_res::Function,
+    nlconstraints::Function,
+    jac_nlcons::Function,
+    A::Matrix{T},
+    b::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T};
+    mu0::T = T(10),
+    tau::T = T(100),
+    omega0::T = T(1),
+    eta0::T = T(1),
+    k_crit::T = T(1),
+    k_feas::T = T(0.1),
+    beta_crit::T = T(1),
+    beta_feas::T = 0.9) where T
+
+    # Initialize tolerances
+    omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas)
+
+    # Instantiate the augmented Lagrangian
+    aug_lag = AugmentedLagrangian(residuals, nlconstraints, mu0)
+    
     return
 end
 
@@ -16,42 +102,6 @@ function inner_iteration(x0::Vector{T},
 end
 
 
-#= Compute a minor iterate
-First compute a descent direction by approximately applying the conjugate gradient method =# 
-function minor_iterate(x::Vector{T},
-                       w::Vector{T},
-                       H::Matrix{T},
-                       A::Matrix{T},
-                       chol_AAᵀ::Cholesky{T,Matrix{T}},
-                       fix_bounds::Vector{Int},
-                       ℓ::Vector{T},
-                       u::Vector{T},
-                       Δ::T,
-                       ε::T,
-                       max_iter::Int,
-                       verbose::Bool=false) where T
-    @assert size(w,1) == size(x,1) "Current iterate and step arrays do not have same size"
-    w[:] = x[:]
-
-    # Bounds of the problem
-    ℓ_bar = map(t -> max(t,-Δ), ℓ - x)
-    u_bar = map(t -> min(t,Δ), u - x)
-    chol_aug_aat = cholesky_aug_aat(A, fix_bounds, chol_AAᵀ)
-    pcg_status = projected_cg!(w,H,c,A,chol_AAᵀ, chol_aug_aat, fix_bounds, ℓ_bar, u_bar, Δ, ε, max_iter)
-
-    axpy!(-1,x,w) # minor step
-    α = projected_search(w)
-
-    # Update minor iterate
-    axpy!(α,w,x)
-    return pcg_status
-end
-
-#= Projected search along the minor step w=#
-function projected_search(w::Vector{T}) where T
-    β = one(T)
-    return β
-end
 
 #= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path 
 
