@@ -2,15 +2,18 @@
     
     # Feasibe set of problem 48 from Hock Schittkowski collection
     
-    (m,n) = (2,5)
+    (m,n) = (1,5)
     A = [1.0 1 1 1 1;
     0 0 1 -2 -2]
     b = [5.0, -3]
     x_hs = [3.0, 5, -3, 2, -2]
 
-    ifix = [1,2]
-    Z = [1.0 0 0 0 0;
-    0 1 0 0 0]
+    fixed_i = [1,2]
+    ifix = BitVector([i in fixed_i for i=1:n])
+    Z = Matrix{Float64}(I,n,n)[ifix,:]
+    # Z = [1.0 0 0 0 0;
+    # 0 1 0 0 0]
+    @show Z
     B = vcat(A,Z)
 
     v = zeros(n)
@@ -25,7 +28,7 @@
     Av = A*v
     @show A*v
     
-    @test B*x_hs ≈ BEnlsip.mul_A_tilde(A,ifix,x_hs)
+    @test B*x_hs ≈ BEnlsip.mul_a_tilde(A,ifix,x_hs)
     # Feasibility
     @test all(≤(eps()), v[ifix])
     @test dot(Av, Av) ≤ eps() 

@@ -61,9 +61,10 @@ function mul_A_tildeT(A::Matrix{T}, fix_bounds::Vector{Int}, x::Vector{T}) where
     return y
 end
 
-# Forms the cholesky decomposition of ÃÃᵀ
+#= Forms the Cholesky decomposition of ÃÃᵀ 
+Computation exploits its block structure =#
 
-function cholesky_aug_aat(A::Matrix{T}, fix_bounds::Vector{Int}, chol_AAᵀ::Cholesky{T,Matrix{T}}) where T
+function cholesky_aug_aat(A::Matrix{T}, fix_bounds::Vector{Int}, chol_aat::Cholesky{T,Matrix{T}}) where T
     (m,n) = size(A)
     p = size(fix_bounds,1)
     mpp = m+p
@@ -74,11 +75,11 @@ function cholesky_aug_aat(A::Matrix{T}, fix_bounds::Vector{Int}, chol_AAᵀ::Cho
     L = LowerTriangular(Matrix{T}(undef, mpp, mpp))
     
     A_act_cols = view(A,:,fix_bounds)
-    G = chol_AAᵀ.L \ A_act_cols
+    G = chol_aat.L \ A_act_cols
     mul!(H, G', G, -1, 1) # forms I - GᵀG
     
-    # Forms the L factor of BBᵀ Cholesy decomposition
-    L[1:m,1:m] = chol_AAᵀ.L
+    # Forms the L factor of ÃÃᵀ Cholesy decomposition
+    L[1:m,1:m] = chol_aat.L
     L[m+1:end,1:m] = G'
     L[m+1:end,p+1:end] = cholesky(H).L  
     return Cholesky(L)
@@ -99,7 +100,12 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_aat::Cholesky{T,Matrix{T}}
 end
  
 
-function projection!(v::Vector{T}, A::Matrix{T}, chol_aug_mat::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
+function projection!(v::Vector{T}, 
+    A::Matrix{T}, 
+    chol_aug_aat::Cholesky{T,Matrix{T}}, 
+    fix_bounds::Vector{Int}, 
+    r::Vector{T}) where T
+
     (m,n) = size(A)
     p = size(fix_bounds,1)
     mpp = m+p
@@ -109,13 +115,12 @@ function projection!(v::Vector{T}, A::Matrix{T}, chol_aug_mat::Cholesky{T,Matrix
     
 
     # Solves the normal equations to compute the orthogonal projection
-    y[:] = chol_aug_mat.L \ mul_A_tilde(A, fix_bounds, r)
-    w[:] = chol_aug_mat.U \ y 
+    y[:] = chol_aug_aat.L \ mul_A_tilde(A, fix_bounds, r)
+    w[:] = chol_aug_aat.U \ y 
     v[:] = r - mul_A_tildeT(A, fix_bounds, w)  
     return
 end
 
-# out-of-place versions of the above methods
 """
     projection(A, chol_aat, r)
 
@@ -130,15 +135,15 @@ function projection(A::Matrix{T}, chol_aat::Cholesky{T,Matrix{T}}, r::Vector{T})
 end
 
 """
-    projection(A, chol_aat, fix_bounds, r)
+    projection(A, chol_aug_aat, fix_bounds, r)
 
 Compute the projection of vector 'r' onto the null space of matrix 'A' with some components fixed to 0.
 
 More precisely, solves the normal equations associated to the problem 'minᵥ {||v-r|| | Av = 0, vᵢ = 0 for i ∈ fix_bounds}' using the Cholesky factorization of an augmented matrix.
 """
-function projection(A::Matrix{T}, chol_aug_mat::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
+function projection(A::Matrix{T}, chol_aug_aat::Cholesky{T,Matrix{T}}, fix_bounds::Vector{Int}, r::Vector{T}) where T
     v = Vector{T}(undef,size(r,1))
-    projection!(v,A,chol_aug_mat,fix_bounds,r)
+    projection!(v,A,chol_aug_aat,fix_bounds,r)
     return v 
 end
 
