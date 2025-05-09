@@ -101,6 +101,33 @@ function inner_iteration(x0::Vector{T},
     return
 end
 
+#= Return the norm of the reduced gradient 'Ñᵀg'
+    
+    * 'g' is the gradient of the augmented Lagrangian at current iterate
+
+    * 'Ñ' is an orthonormal matrix representing the null space of current active constraints
+
+=#
+
+function norm_reduced_gradient(
+    g::Vector{T},
+    A::Matrix{T},
+    fix_bounds::BitVector,
+    chol_aug_aat::Cholesky{T,Matrix{T}}) where T
+
+    reduced_g = projection(A,chol_aug_aat,fix_bounds,g)
+    return norm(reduced_g)
+end
+
+function norm_reduced_gradient(
+    g::Vector{T},
+    A::Matrix{T},
+    chol_aat::Cholesky{T,Matrix{T}}) where T
+
+    reduced_g = projection(A,chol_aat,g)
+    return norm(reduced_g)
+end
+# Method the case with no active bounds
 
 
 #= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path 
