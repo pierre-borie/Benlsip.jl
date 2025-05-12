@@ -1,52 +1,55 @@
-#= Structure and methods associated to the augmented Lagrangian
+"""
+    new_point(x,y,mu,residuals,nlconstraints,jac_res,jac_nlcons)
 
-Contains
-- evaluation of the objective 
-- evaluation of the gradient 
-- evaluation of the Gauss-Newton approximation of the Hessian
-=#
+Methods 'new_point' evaluate at 'x' and return the following 
 
-mutable struct AugmentedLagrangian{T} where T
-    residuals::Function
-    nlconstraints::Function
-    mu::T
-end
+* residuals, nonlinear constraints
 
-function al_obj(x::Vector{T}, 
-    y::Vector{T}, 
-    al::AugmentedLagrangian{T}) where T 
+* Jacobians of the residuals and constraints
 
-    rx, cx = al.residuals(x), al.nlconstraints
-    return 0.5*dot(rx,rx) + dot(y,cx) + 0.5*mu*dot(cx,cx)
-end 
+* first-order estimate of the multipliers
+"""
 
-function al_gradient(x::Vector{T}, 
-    al::AugmentedLagrangian{T},
-    jac_res::Function, 
+function new_point(
+    x::Vector{T},
+    y::Vector{T},
+    mu::T,
+    residuals::Function,
+    nlconstraints::Function,
+    jac_res::Function,
     jac_nlcons::Function)
 
-    rx,cx  = al.residuals(x), al.nlconstraints(x)
-    Jx, Cx  = jac_res(x), jac_nlcons(x)
-    y_bar = y + al.mu*cx
-
-    return Jx'*rx + Cx'*y_bar
+    rx, cx = residuals(x), nlconstraints(x)
+    Jx, Cx = jac_res(x), jac_nlcons(x)
+    y_bar = y + mu*cx 
+    return rx, cx, Jx, Cx, y_bar
 end
 
-function al_gn_hessian(x::Vector{T}, 
-    al::AugmentedLagrangian{T},
-    jac_res::Function, 
-    jac_nlcons::Function)
+"""
+    al_quadratic_term(mu,J,C)
 
-    Jx, Cx  = jac_res(x), jac_nlcons(x)
+Returns the function that evaluate at 'p' the quadratic term 'pᵀHp' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
+"""
+function al_quadratic_term(
+    mu::T,
+    J::Matrix{T}, 
+    C::Matrix{T}) where T
 
-    return Jx'*Jx + al.mu*Cx'*Cx
+    eval_pHp = (p::Vector{T}) -> begin 
+    Jp = J*p
+    Cp = C*p
+    dot(Jp,Jp) + mu * dot(Cp,Cp) end
+
+    return eval_pHp
 end
-
 #### The solver 
 
 ### Constraints relatite methods
 
-function is_feasible(x::Vector{T}, A::Matrix{T}, x_l::Vector{T}, x_u::Vector{T})
+function is_feasible(x::Vector{T}, 
+    A::Matrix{T}, 
+    x_l::Vector{T}, 
+    x_u::Vector{T})
 
     return isapprox(A*x,b) && all(x_l .<= x) && all(x .<= x_u)
 end
@@ -97,7 +100,18 @@ end
 #= Solves the sub problem of an outer iteration
 Approximately minimize the Augmented Lagrangian function with respect to the primal variable with tolerance ω > 0=#
 function inner_iteration(x0::Vector{T},
-                         ) where T
+    al::AugmentedLagrangian{T},
+    jac_res::Function,
+    jac_nlcons::Function,
+    A::Matrix{T},
+    x_l::Vector{T},
+    x_u::Vector{T},
+    delta0::T,
+    eta1::T,
+    eta2::T,
+    gamma1::T,
+    gamma2::T,
+    omega_tol::T) where T
     return
 end
 

@@ -31,6 +31,7 @@ function cholesky_aug_aat(
     
     A_act_cols = view(A,:,fix_bounds)
     G = chol_aat.L \ A_act_cols
+    # TODO: implement a more efficient computation of I - GᵀG
     mul!(H, G', G, -1, 1) # forms I - GᵀG
     
     # Forms the L factor of ÃÃᵀ Cholesy decomposition
