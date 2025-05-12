@@ -140,7 +140,8 @@ function solve_subproblem(x0::Vector{T},
 
     mk = 0.5*dot(rk,rk) * 0.5*mu*dot(ck,ck) # objective function
     gk = Jk'*rk + Ck'*yk_bar # gradient
-    
+
+    terminated = false
     return
 end
 
