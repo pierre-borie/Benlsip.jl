@@ -25,31 +25,44 @@ function new_point(
     return rx, cx, Jx, Cx, y_bar
 end
 
-"""
-    al_quadratic_term(mu,J,C)
+""" s_inner_hs(s,mu,J,C)
 
-Returns the function that evaluate at 'p' the quadratic term 'pᵀHp' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
+Evaluate at 's' the quadratic term 'sᵀHs' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
 """
-function al_quadratic_term(
+function s_inner_hs(
+    s::Vector{T},
     mu::T,
     J::Matrix{T}, 
     C::Matrix{T}) where T
 
-    eval_pHp = (p::Vector{T}) -> begin 
-    Jp = J*p
-    Cp = C*p
-    dot(Jp,Jp) + mu * dot(Cp,Cp) end
+    Js = J*s
+    Cs = C*s 
+    return dot(Js,Js) + mu*dot(Cs,Cs)
+end
 
-    return eval_pHp
+""" hs(s,mu,J,C)
+
+Evaluate at 's' the matrix-vector product 'Hs' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
+"""
+function hs(
+    s::Vector,
+    mu::T,
+    J::Matrix{T},
+    C::Matrix{T})
+
+    Js, muCs = J*s, mu*C*s 
+    return J'*Js + C'*muCs
 end
 #### The solver 
 
 ### Constraints relatite methods
 
-function is_feasible(x::Vector{T}, 
+function is_feasible(
+    x::Vector{T}, 
     A::Matrix{T}, 
     x_l::Vector{T}, 
-    x_u::Vector{T})
+    x_u::Vector{T};
+    b::Vector{T}=zeros(T,size(A,2))) where T
 
     return isapprox(A*x,b) && all(x_l .<= x) && all(x .<= x_u)
 end
@@ -99,20 +112,99 @@ end
 
 #= Solves the sub problem of an outer iteration
 Approximately minimize the Augmented Lagrangian function with respect to the primal variable with tolerance ω > 0=#
-function inner_iteration(x0::Vector{T},
-    al::AugmentedLagrangian{T},
+function solve_subproblem(x0::Vector{T},
+    y::Vector{T},
+    mu::T,
+    residuals::Function,
+    nlconstraints::Function,
     jac_res::Function,
     jac_nlcons::Function,
     A::Matrix{T},
+    chol_aat::Cholesky{T,Matrix{T}},
+    b::Vector{T},
     x_l::Vector{T},
     x_u::Vector{T},
     delta0::T,
+    omega_tol::T;
     eta1::T,
     eta2::T,
     gamma1::T,
     gamma2::T,
-    omega_tol::T) where T
+    gamma_c::T = T(10),
+    kappa0::T = T(1e-2)) where T
+
+
+    @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 <= gamma2) "Invalid trust region updates paramaters"
+
+    rk, ck, Jk, Ck, yk_bar = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
+
+    mk = 0.5*dot(rk,rk) * 0.5*mu*dot(ck,ck) # objective function
+    gk = Jk'*rk + Ck'*yk_bar # gradient
+    
     return
+end
+
+function cauchy_step(
+    x::Vector{T},
+    g::Vector{T},
+    J::Matrix{T},
+    C::Matrix{T},
+    A::Matrix{T},
+    b::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T},
+    delta::T,
+    t0::T,
+    kappa0::T,
+    gamma_c::T) where T
+
+    # Bounds on the step 
+    t_trial = t0
+    s = projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
+
+    increase = false
+    s_infnorm = norm(Inf,s)
+    if s_infnorm > delta
+        increase = false
+    else
+        gts = dot(g,s)
+        qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+        progress = qs <= kappa0 * gts
+    end
+
+    if increase
+        t_c = t_trial
+        progress = true
+        while progress
+            t_trial *= gamma_c
+            s = projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
+            s_infnorm = norm(Inf,s)
+            if s_infnorm <= delta
+                gts = dot(g,s)
+                qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                progress = qs <= kappa0 * gts
+                if progress t_c = t_trial end 
+            else
+                progress = false
+            end
+        end
+    else
+        satisfied = false
+        while !satisfied
+            t_trial /= gamma_c
+            s =  projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
+            s_infnorm = norm(Inf,s)
+            if s_infnorm <= delta
+                gts = dot(g,s)
+                qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                satisfied = qs <= kappa0 * gts
+            end
+        end
+        t_c = t_trial
+    end
+
+    s_c = projection_polyhedron(x-t*g, A, b, x_l, x_u) - x
+    return s_c
 end
 
 #= Return the norm of the reduced gradient 'Ñᵀg'
