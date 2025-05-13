@@ -3,11 +3,11 @@
 
 Methods 'new_point' evaluate at 'x' and return the following 
 
-* residuals, nonlinear constraints
+* residuals 'rx', nonlinear constraints 'cx'
 
-* Jacobians of the residuals and constraints
+* Respectice Jacobians of the residuals and constraints 'Jx', 'Cx'
 
-* first-order estimate of the multipliers
+* first-order estimate of the multipliers 'y_bar'
 """
 
 function new_point(
@@ -150,6 +150,7 @@ function cauchy_step(
     g::Vector{T},
     J::Matrix{T},
     C::Matrix{T},
+    mu::T,
     A::Matrix{T},
     b::Vector{T},
     x_l::Vector{T},
@@ -204,15 +205,31 @@ function cauchy_step(
         t_c = t_trial
     end
 
+    # This computation is (likely) uneccessary, retrieving the cauchy step from above should be possible 
     s_c = projection_polyhedron(x-t*g, A, b, x_l, x_u) - x
     return s_c
+end
+
+function minor_iterate(
+    x::Vector{T},
+    g::Vector{T},
+    J::Matrix{T},
+    C::Matrix{T},
+    mu::T,
+    A::Matrix{T},
+    x_l::Vector{T},
+    x_u::Vector{T},
+    fixed_var::BitVector,
+    delta::T,
+    kappa2::T) where T 
+
 end
 
 #= Return the norm of the reduced gradient 'Ñᵀg'
     
     * 'g' is the gradient of the augmented Lagrangian at current iterate
 
-    * 'Ñ' is an orthonormal matrix representing the null space of current active constraints
+    * 'Ñ' is an orthonormal matrix representing the null space of current active linear constraints
 
 =#
 

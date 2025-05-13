@@ -197,6 +197,16 @@ end
 
 ##### Methods relative to active bounds manipulation
 
-# Return the indices of active Constraints
+function active_bounds(
+    x::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T};
+    tol::T=sqrt(eps(T))) where T 
 
-active_index(fix_bounds::BitVector) = [i for (i,val) in enumerate(fix_bounds) if val]
+    active = BitVector(undef, size(x,1))
+
+    for i in axes(x,1)
+        active[i] = (x[i] - x_l[i] <= tol) || (x[i] - u[i] >= -tol)
+    end
+    return active 
+end
