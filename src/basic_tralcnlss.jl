@@ -221,8 +221,15 @@ function minor_iterate(
     x_u::Vector{T},
     fixed_var::BitVector,
     delta::T,
-    kappa2::T) where T 
+    kappa2::T) where T
 
+    n = size(x,1)
+
+    free_var = free_index(fixed_var)
+    w_u, w_l = fill(Inf,n), fill(-Inf,n)
+
+    w_u[free_var] .= (t -> min(t, delta)).(x_u[free_var]-x[free_var])
+    w_l[free_var] .= (t -> max(t, -delta)).(x_l[free_var]-x[free_var])
 end
 
 #= Return the norm of the reduced gradient 'Ñᵀg'
