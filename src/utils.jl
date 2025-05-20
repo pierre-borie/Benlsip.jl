@@ -196,10 +196,12 @@ function projection_polyhedron(
 end
 
 ##### Methods relative to active bounds manipulation
-""" active_w_chol(x,xₗ,xᵤ,A,chol_AAᵀ;ε)
+""" active_w_chol(x,xₗ,xᵤ,A,chol_AAᵀ)
 
 This methods identifies components of vector 'x' whose values equals either an upper or lower bound 
 and encodes this information into a 'BitVector'.
+
+Uses default tolerance of the 'isapprox' method.
 
 The Cholesky decomposition of the associated augmented matrix is also formed.
 """
@@ -208,13 +210,12 @@ function active_w_chol(
     s_l::Vector{T},
     s_u::Vector{T},
     A::Matrix{T},
-    chol_aat::Cholesky{T,Matrix{T}};
-    tol::T=sqrt(eps(T))) where T 
+    chol_aat::Cholesky{T,Matrix{T}}) where T 
 
     active = BitVector(undef, size(x,1))
 
     for i in axes(x,1)
-        active[i] = (s[i] - s_l[i] <= tol) || (s[i] - s_u[i] >= -tol)
+        active[i] = (isapprox(s[i],s_l[i])) || (isapprox(s[i],s_u[i]))
     end
 
     chol_aug_aat = cholesky_aug_aat(A,active,chol_aat)

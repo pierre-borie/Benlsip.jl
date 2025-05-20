@@ -4,7 +4,7 @@ module BEnlsip
 using LinearAlgebra, JuMP, Ipopt
 
 # Files
-for f in ["utils"]
+for f in ["utils", "basic_tralcnlss"]
     include("./$f.jl")
 end
 

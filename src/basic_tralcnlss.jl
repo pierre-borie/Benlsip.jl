@@ -1,13 +1,27 @@
+abstract type TralcnllsData end
+
+mutable struct AlHessian{T<:Real} <: TralcnllsData
+    J::Matrix{T}
+    C::Matrix{T}
+    mu::T 
+end
+
 """
     new_point(x,y,mu,residuals,nlconstraints,jac_res,jac_nlcons)
 
 Methods 'new_point' evaluate at 'x' and return the following 
 
-* residuals 'rx', nonlinear constraints 'cx'
+* residuals 'rx'
 
-* Respectice Jacobians of the residuals and constraints 'Jx', 'Cx'
+* nonlinear constraints 'cx' 
 
 * first-order estimate of the multipliers 'y_bar'
+
+* value of the augmented Lagrangian function 'mx'
+
+* gradient 'g' of the augmented Lagrangian
+
+* Gauss-Newton approximmation of the Hessian 'H' of the augmented Lagrangian encoded in [`AlHessian`](@ref) type
 """
 
 function new_point(
@@ -17,13 +31,40 @@ function new_point(
     residuals::Function,
     nlconstraints::Function,
     jac_res::Function,
-    jac_nlcons::Function)
+    jac_nlcons::Function) where T
 
     rx, cx = residuals(x), nlconstraints(x)
     Jx, Cx = jac_res(x), jac_nlcons(x)
     y_bar = y + mu*cx 
-    return rx, cx, Jx, Cx, y_bar
+    mx = 0.5*dot(rx,rx) * 0.5*mu*dot(cx,cx) # objective function
+    g = Jx'*rx + Cx'*y_bar # gradient
+    H = AlHessian(Jx,Cx,mu) # Hessian
+
+    return rx, cx, y_bar, mx, g, H
 end
+
+""" vthv(H,v)
+
+The quadratic term 'vᵀHv' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian encoded into
+the [`AlHessian`](@ref) type.
+"""
+function vthv(H::AlHessian{T}, v::Vector{T}) where T
+    Jv = H.J*v
+    Cv = H.C*v 
+    return dot(Jv,Jv) + H.mu*dot(Cv,Cv)
+end 
+
+""" Base.:*(H::AlHessian, v::Vector)
+
+Overload the '*' operator to be compatible with the type [`AlHessian`](@ref).
+"""
+function Base.:*(H::AlHessian{T}, v::Vector{T}) where T
+    Jv = H.J*v 
+    muCv = H.mu*H.C*v 
+    return H.J' * Jv + H.C' * muCv
+end
+
+
 
 """ s_inner_hs(s,mu,J,C)
 
@@ -48,7 +89,7 @@ function hs(
     s::Vector,
     mu::T,
     J::Matrix{T},
-    C::Matrix{T})
+    C::Matrix{T}) where T
 
     Js, muCs = J*s, mu*C*s 
     return J'*Js + C'*muCs
@@ -68,11 +109,12 @@ function is_feasible(
 end
 
 ### Tolerances relative methods
-function initial_tolerances(mu::T,
+function initial_tolerances(
+    mu::T,
     omega0::T,
     eta0::T,
     k_crit::T,
-    k_feas::T,)
+    k_feas::T) where T
 
     omega = omega0 * mu ^ (-k_crit)
     eta = eta0 * mu ^ (-k_feas)
@@ -136,10 +178,7 @@ function solve_subproblem(x0::Vector{T},
 
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 <= gamma2) "Invalid trust region updates paramaters"
 
-    rk, ck, Jk, Ck, yk_bar = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
-
-    mk = 0.5*dot(rk,rk) * 0.5*mu*dot(ck,ck) # objective function
-    gk = Jk'*rk + Ck'*yk_bar # gradient
+    rk, ck, yk_bar, mk, gk, Hk = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
 
     terminated = false
     return
@@ -148,9 +187,7 @@ end
 function cauchy_step(
     x::Vector{T},
     g::Vector{T},
-    J::Matrix{T},
-    C::Matrix{T},
-    mu::T,
+    H::AlHessian{T},
     A::Matrix{T},
     b::Vector{T},
     x_l::Vector{T},
@@ -170,7 +207,8 @@ function cauchy_step(
         increase = false
     else
         gts = dot(g,s)
-        qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+        # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+        qs = 0.5*vthv(H,s) +  gts
         progress = qs <= kappa0 * gts
     end
 
@@ -183,7 +221,8 @@ function cauchy_step(
             s_infnorm = norm(Inf,s)
             if s_infnorm <= delta
                 gts = dot(g,s)
-                qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                qs = 0.5*vthv(H,s) +  gts
                 progress = qs <= kappa0 * gts
                 if progress t_c = t_trial end 
             else
@@ -198,7 +237,8 @@ function cauchy_step(
             s_infnorm = norm(Inf,s)
             if s_infnorm <= delta
                 gts = dot(g,s)
-                qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
+                qs = 0.5*vthv(H,s) +  gts
                 satisfied = qs <= kappa0 * gts
             end
         end
@@ -210,26 +250,132 @@ function cauchy_step(
     return s_c
 end
 
+""" minor_iterate(x,s,g,J,C,μ,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
+
+Compute a search direction 'w' and a steplength 'α' such that the next minor iterate 'x + s + α*w' provides a sufficient reduction, where
+
+* 'x' is the current iterate 
+
+* 's' is the previous minor step or, equivalently, 'x + s' is the previous minor iterate
+"""
 function minor_iterate(
     x::Vector{T},
+    s::Vector{T},
     g::Vector{T},
-    J::Matrix{T},
-    C::Matrix{T},
+    H::AlHessian{T},
     mu::T,
     A::Matrix{T},
     x_l::Vector{T},
     x_u::Vector{T},
+    chol_aug_aat::Cholesky{T,Matrix{T}},
     fixed_var::BitVector,
     delta::T,
     kappa2::T) where T
 
     n = size(x,1)
 
+    x_minor = x+s
+
     free_var = free_index(fixed_var)
     w_u, w_l = fill(Inf,n), fill(-Inf,n)
 
-    w_u[free_var] .= (t -> min(t, delta)).(x_u[free_var]-x[free_var])
-    w_l[free_var] .= (t -> max(t, -delta)).(x_l[free_var]-x[free_var])
+    w_u[free_var] .= (t -> min(t, delta)).(x_u[free_var]-x_minor[free_var])
+    w_l[free_var] .= (t -> max(t, -delta)).(x_l[free_var]-x_minor[free_var])
+
+
+end
+
+function projected_cg(
+    s::Vector{T},
+    g::Vector{T},
+    H::AlHessian{T},
+    A::Matrix{T},
+    w_l::Vector{T},
+    w_u::Vector{T},
+    chol_aug_aat::Cholesky{T,Matrix{T}},
+    fix_bounds::BitVector,
+    kappa2::T;
+    atol::T = sqrt(eps(T))) where T
+
+    (m,n) = size(A)
+    
+    # Initialization
+    w = zeros(n)
+    r = H*s + g
+    v = projection(A,chol_aug_aat,fix_bounds,r)
+    rtv = dot(r,v)
+    p = -v
+
+    tol_cg = kappa2 * norm(v)
+    tol_negcurve = atol
+
+    iter = 1
+    max_iter = 2*(n-m-count(fix_bounds))
+    approx_solved = false 
+    neg_curvature = false
+    bound_hit = false
+
+    while !(approx_solved || bound_hit || neg_curvature || iter <= max_iter)
+        Hp = H*p
+        pHp = dot(p,Hp)
+
+        if pHp <= tol_negcurve # negative curvature
+            neg_curvature = true
+            if abs(pHp) > tol_negcurve # nonzero curvature
+                gamma = factor_to_boundary(p,w,w_l,w_u)
+                w .+= gamma * p
+            end
+        else
+            rtv = dot(r,v)
+            alpha = rtv / pHp
+
+            gamma = factor_to_boundary(p,w,w_l,w_u)
+            bound_hit = alpha > gamma
+            if bound_hit
+                w .+= gamma * p
+            else 
+                w .+= alpha*p
+                r .+= alpha*Hp
+                v = projection(A,chol_aug_aat,fix_bounds,r)
+                rtv_next = dot(r,v)
+                beta = rtv_next / rtv
+                axpby!(-one(T), v, beta, p) # p = -v + βp
+                rtv = rtv_next
+                approx_solved = abs(rtv) < tol_cg
+                iter += 1
+            end
+        end
+    end
+
+    status = if approx_solved
+        :solved
+    elseif bound_hit
+        :bound_hit
+    elseif neg_curvature
+        :negative_curvature
+    elseif iter == max_iter
+        :max_iter_reached
+    end
+
+    return w, status
+end
+
+function factor_to_boundary(
+    p::Vector{T},
+    w::Vector{T},
+    w_l::Vector{T},
+    w_u::Vector{T};
+    atol::T = T(1e-10)) where T 
+
+    gamma = Inf
+    for i in axes(w,1)
+        if p[i] <= -atol 
+            gamma = min(gamma, (w_l[i] - w[i]) / p[i])
+        elseif p[i] >= atol
+            gamma = min(gamma, (w_u[i] - w[i]) / p[i])
+        end
+    end
+    return gamma
 end
 
 #= Return the norm of the reduced gradient 'Ñᵀg'
