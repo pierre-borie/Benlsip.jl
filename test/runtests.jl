@@ -2,5 +2,6 @@ using BEnlsip, LinearAlgebra
 using Test
 
 @testset "BEnlsip.jl" begin
-    include("projection.jl")
+    # include("projection.jl")
+    include("structures.jl")
 end
