@@ -1,3 +1,5 @@
+######## DEPRECATED FILE ##################
+
 export solve_quadratic
 
 #= Computes the least norm vector satisfying Ax=b, i.e. x = Aᵀ(AAᵀ)⁻¹b by the normal equations approach
