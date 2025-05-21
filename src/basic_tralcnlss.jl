@@ -6,6 +6,8 @@ mutable struct AlHessian{T<:Real} <: TralcnllsData
     mu::T 
 end
 
+@enum CG_status solved bound_hit negative_curvature max_iter_reached
+
 """
     new_point(x,y,mu,residuals,nlconstraints,jac_res,jac_nlcons)
 
@@ -123,7 +125,7 @@ end
 
 #= TRALCNLSS stands for Trust Region Augmented Lagrangian Constrainted Nonlinear Least Squares Solver =#
 
-function tralclss(x0::Vector{T},
+function tralcllss(x0::Vector{T},
     y0::Vector{T},
     residuals::Function,
     jac_res::Function,
@@ -263,7 +265,6 @@ function minor_iterate(
     s::Vector{T},
     g::Vector{T},
     H::AlHessian{T},
-    mu::T,
     A::Matrix{T},
     x_l::Vector{T},
     x_u::Vector{T},
@@ -275,19 +276,25 @@ function minor_iterate(
     n = size(x,1)
 
     x_minor = x+s
-
+    g_model = H*s + g
     free_var = free_index(fixed_var)
     w_u, w_l = fill(Inf,n), fill(-Inf,n)
 
     w_u[free_var] .= (t -> min(t, delta)).(x_u[free_var]-x_minor[free_var])
     w_l[free_var] .= (t -> max(t, -delta)).(x_l[free_var]-x_minor[free_var])
 
+    w, cg_status = projected_cg(g_model, H, A, w_l, w_u, chol_aug_aat, fixed_var, kappa2)
 
+    if cg_status != negative_curvature
+        alpha = linesearch(g_model, H, w, w_l, w_u, fixed_var)
+        w .+= alpha * w
+    end
+
+    return w, cg_status
 end
 
 function projected_cg(
-    s::Vector{T},
-    g::Vector{T},
+    r0::Vector{T},
     H::AlHessian{T},
     A::Matrix{T},
     w_l::Vector{T},
@@ -301,7 +308,8 @@ function projected_cg(
     
     # Initialization
     w = zeros(n)
-    r = H*s + g
+    # r = H*s + g
+    r = r0
     v = projection(A,chol_aug_aat,fix_bounds,r)
     rtv = dot(r,v)
     p = -v
@@ -313,9 +321,9 @@ function projected_cg(
     max_iter = 2*(n-m-count(fix_bounds))
     approx_solved = false 
     neg_curvature = false
-    bound_hit = false
+    outside_region = false
 
-    while !(approx_solved || bound_hit || neg_curvature || iter <= max_iter)
+    while !(approx_solved || outside_region || neg_curvature || iter <= max_iter)
         Hp = H*p
         pHp = dot(p,Hp)
 
@@ -330,7 +338,7 @@ function projected_cg(
             alpha = rtv / pHp
 
             gamma = factor_to_boundary(p,w,w_l,w_u)
-            bound_hit = alpha > gamma
+            outside_region = alpha > gamma
             if bound_hit
                 w .+= gamma * p
             else 
@@ -348,16 +356,43 @@ function projected_cg(
     end
 
     status = if approx_solved
-        :solved
-    elseif bound_hit
-        :bound_hit
+        solved
+    elseif outside_region
+        bound_hit
     elseif neg_curvature
-        :negative_curvature
+        negative_curvature
     elseif iter == max_iter
-        :max_iter_reached
+        max_iter_reached
     end
 
     return w, status
+end
+
+function linesearch(
+    g_model::Vector{T},
+    H::AlHessian{T},
+    w::Vector{T},
+    w_l::Vector{T},
+    w_u::Vector{T},
+    fix_bounds::BitVector) where T 
+
+    # unconstrained minimizer of the model along the descent direction
+    wHw = vthv(H,w)
+    alpha_opt = (wHw > 0 ? -dot(g_model,w) / wHw : Inf)
+
+    # Maximum step allowed by the bounds on the free variables
+    alpha_allowed =  Inf
+    for i in axes(w,1)
+        if !fix_bounds[i]
+            if w[i] < 0
+                alpha_allowed = min(alpha_allowed, w_l[i] / w[i])
+            elseif w[i] > 0
+                alpha_allowed = min(alpha_allowed, w_u[i] / w[i])
+            end
+        end
+    end
+
+    return min(alpha_opt, alpha_allowed)
 end
 
 function factor_to_boundary(
