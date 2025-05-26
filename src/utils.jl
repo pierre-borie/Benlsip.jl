@@ -207,11 +207,15 @@ The Cholesky decomposition of the associated augmented matrix is also formed.
 """
 function active_w_chol(
     s::Vector{T},
-    s_l::Vector{T},
-    s_u::Vector{T},
+    x::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T},
+    delta::T,
     A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}}) where T 
 
+    s_l = (t -> max(t,delta)).(x_l-x)
+    s_u = (t -> min(t,delta)).(x_u-x)
     active = BitVector(undef, size(x,1))
 
     for i in axes(x,1)

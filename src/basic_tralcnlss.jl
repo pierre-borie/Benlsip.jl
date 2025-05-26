@@ -186,6 +186,62 @@ function solve_subproblem(x0::Vector{T},
     return
 end
 
+""" inner_step(x,g,H,A,chol_AAᵀ,b,xₗ,xᵤ,Δ,nb_minor_step,κ₀,κ₂,κ₃,γc)
+
+Starting from the current iterate 'x', compute a step 's' such that the inner step 'x+s' sufficiently reduces the model.
+
+Returns the step 's'.
+"""
+function inner_step(
+    x::Vector{T},
+    g::Vector{T},
+    H::AlHessian{T},
+    A::Matrix{T},
+    chol_aat::Cholesky{T,Matrix{T}},
+    b::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T},
+    delta::T,
+    t0::T,
+    nb_minor_step::Int,
+    kappa0::T,
+    kappa2::T,
+    kappa3::T,
+    gamma_c::T) where T
+
+    s = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa0,gamma_c)
+    g_minor = H*s+g
+    fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
+
+    j = 1 # minor iterations index
+
+    norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+    norm_reduced_g_minor =  norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+
+    approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
+
+    cg_stop  = false
+
+    # Minor iterates loop
+    while j < nb_minor_step || !approx_solved || !cg_stop
+
+        # descent direction and termination status of the cg iterations
+        w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
+        s .+= w # cumulated step 
+        g_minor = H*s+g
+        fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat) # New active set
+
+        # Loop termination criteria
+        norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+        norm_reduced_g_minor =  norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+        approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
+        cg_stop = cg_status == negative_curvature
+        j += 1
+    end
+
+    return s
+end
+
 function cauchy_step(
     x::Vector{T},
     g::Vector{T},
@@ -252,7 +308,7 @@ function cauchy_step(
     return s_c
 end
 
-""" minor_iterate(x,s,g,J,C,μ,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
+""" minor_iterate(x,s,g,H,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
 
 Compute a search direction 'w' and a steplength 'α' such that the next minor iterate 'x + s + α*w' provides a sufficient reduction, where
 
@@ -263,7 +319,7 @@ Compute a search direction 'w' and a steplength 'α' such that the next minor it
 function minor_iterate(
     x::Vector{T},
     s::Vector{T},
-    g::Vector{T},
+    g_model::Vector{T},
     H::AlHessian{T},
     A::Matrix{T},
     x_l::Vector{T},
@@ -276,7 +332,7 @@ function minor_iterate(
     n = size(x,1)
 
     x_minor = x+s
-    g_model = H*s + g
+    # g_model = H*s + g
     free_var = free_index(fixed_var)
     w_u, w_l = fill(Inf,n), fill(-Inf,n)
 
@@ -292,6 +348,20 @@ function minor_iterate(
 
     return w, cg_status
 end
+
+""" projected_cg(r0,H,A,wₗ,wᵤ,chol_AₓAₓᵀ,fix_bounds,κ₂,atol)
+
+Approximately solve the sub problem 
+
+min 0.5 wᵀHw + wᵀr0 
+s.t. Aw = 0
+     wᵢ = 0,    i ∈ fix_bounds
+     wₗ ≤ w ≤ wᵤ
+
+with respect to 'w' and using the projected conjugate gradient method
+
+Returns the obtained descent direction and the termination status, encoded in the 'Enum' [`CG_status`](@ref)
+"""
 
 function projected_cg(
     r0::Vector{T},
