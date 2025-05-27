@@ -222,7 +222,7 @@ function active_w_chol(
         active[i] = (isapprox(s[i],s_l[i])) || (isapprox(s[i],s_u[i]))
     end
 
-    chol_aug_aat = cholesky_aug_aat(A,active,chol_aat)
+    chol_aug_aat = (any(active) ? cholesky_aug_aat(A,active,chol_aat) : chol_aat)
     return active, chol_aug_aat
 end
 

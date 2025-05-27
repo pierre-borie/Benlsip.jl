@@ -30,10 +30,10 @@ function new_point(
     x::Vector{T},
     y::Vector{T},
     mu::T,
-    residuals::Function,
-    nlconstraints::Function,
-    jac_res::Function,
-    jac_nlcons::Function) where T
+    residuals::F,
+    nlconstraints::F,
+    jac_res::F,
+    jac_nlcons::F) where {T, F<:Function}
 
     rx, cx = residuals(x), nlconstraints(x)
     Jx, Cx = jac_res(x), jac_nlcons(x)
@@ -43,6 +43,41 @@ function new_point(
     H = AlHessian(Jx,Cx,mu) # Hessian
 
     return rx, cx, y_bar, mx, g, H
+end
+
+function evaluate_al(
+    x::Vector{T},
+    mu::T,
+    residuals::F,
+    nlconstraints::F) where {T, F<:Function}
+
+    rx, cx = residuals(x), nlconstraints(x)
+    mx = 0.5*dot(rx,rx) * 0.5*mu*dot(cx,cx) # objective function
+    return rx, cx, mx
+end
+
+function first_derivatives(
+    x::Vector{T},
+    y::Vector{T},
+    mu::T,
+    rx::Vector{T},
+    cx::Vector{T},
+    jac_res::F,
+    jac_nlcons::F) where {T, F<:Function}
+
+    Jx, Cx = jac_res(x), jac_nlcons(x)
+    y_bar = y + mu*cx # first-order multipliers estimates
+    g = Jx'*rx + Cx'*y_bar # gradient
+
+    return y_bar, Jx, Cx, g
+end
+
+function second_derivatives(
+    Jx::Matrix{T},
+    Cx::Matrix{T},
+    mu::T) where T 
+
+    return AlHessian(Jx,Cx,mu)
 end
 
 """ vthv(H,v)
@@ -169,20 +204,60 @@ function solve_subproblem(x0::Vector{T},
     x_l::Vector{T},
     x_u::Vector{T},
     delta0::T,
+    nb_minor_step::Int,
+    k_max::Int,
     omega_tol::T;
     eta1::T,
     eta2::T,
     gamma1::T,
     gamma2::T,
-    gamma_c::T = T(10),
-    kappa0::T = T(1e-2)) where T
+    gamma_c::T,
+    kappa0::T,
+    kappa2::T,
+    kappa3::T) where T
 
 
+    # Constants sanity check
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 <= gamma2) "Invalid trust region updates paramaters"
 
-    rk, ck, yk_bar, mk, gk, Hk = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
+    # Dimensions
+    (m,n) = size(A)
+    x = Vector{T}(undef,n)
+    rx, cx, y_bar, mx, g, H = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
 
-    terminated = false
+    x[:] = x0[:]
+    t = T(1)
+    delta = delta0
+    k = 1
+    solved = false
+
+    while !solved && k <= k_max
+        # step and model reduction
+        s, t, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa0,kappa2,kappa3,gamma_c)
+
+        x_next = x+s
+        rx_next, cx_next, mx_next = evaluate_al(x,mu,residuals,nlconstraints)
+        ared = mx_next - mx
+
+        rho = ared / pred
+
+        if rho > eta1
+            x .= x_next
+            rx[:], cx[:], mx[:] = rx_next[:], cx_next[:], mx_next[:]
+            y_bar, J, C, g = first_derivatives(x,y,mu,rx,cx,jac_res,jac_nlcons)
+            H = second_derivatives(J,C,mu)
+        end
+
+        # Update trust region radius
+        delta = update_tr(delta, rho, eta1, eta2, gamma1, gamma2)
+
+        # Compute criticality measure
+        pix = criticality_measure(g,fix_bounds,A,chol_aug_aat)
+        
+        # Termination criteria 
+        solved = pix < omega_tol
+    end
+
     return
 end
 
@@ -190,7 +265,15 @@ end
 
 Starting from the current iterate 'x', compute a step 's' such that the inner step 'x+s' sufficiently reduces the model.
 
-Returns the step 's'.
+On return 
+
+* the step 's'
+
+* the scalar 't_c' used to compute the Cauchy point 
+
+* the reduction predicted by the model with step 's'
+
+* indices of acitve bounds encoded in a 'BitVector' and the associated Cholesky decomposition
 """
 function inner_step(
     x::Vector{T},
@@ -209,7 +292,7 @@ function inner_step(
     kappa3::T,
     gamma_c::T) where T
 
-    s = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa0,gamma_c)
+    s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa0,gamma_c)
     g_minor = H*s+g
     fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
 
@@ -223,7 +306,7 @@ function inner_step(
     cg_stop  = false
 
     # Minor iterates loop
-    while j < nb_minor_step || !approx_solved || !cg_stop
+    while j <= nb_minor_step && !approx_solved && !cg_stop
 
         # descent direction and termination status of the cg iterations
         w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
@@ -239,7 +322,9 @@ function inner_step(
         j += 1
     end
 
-    return s
+    # Evaluate the reduction of the quadratic model 
+    model_reduction = dot(s,g_minor)
+    return s, t_c, model_reduction, fix_bounds, chol_aug_aat
 end
 
 function cauchy_step(
@@ -304,8 +389,8 @@ function cauchy_step(
     end
 
     # This computation is (likely) uneccessary, retrieving the cauchy step from above should be possible 
-    s_c = projection_polyhedron(x-t*g, A, b, x_l, x_u) - x
-    return s_c
+    s_c = projection_polyhedron(x-t_c*g, A, b, x_l, x_u) - x
+    return s_c, t_c
 end
 
 """ minor_iterate(x,s,g,H,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
@@ -490,6 +575,40 @@ end
     * 'Ñ' is an orthonormal matrix representing the null space of current active linear constraints
 
 =#
+
+function update_tr(
+    delta::T,
+    rho::T,
+    eta1::T,
+    eta2::T,
+    gamma1::T,
+    gamma2::T) where T 
+
+    delta_next = if rho > eta2 # very successful step
+        gamma2 * delta 
+    elseif rho < eta1 # bad step
+        gamma1 * delta 
+    else # successful step 
+        delta 
+    end
+    
+    return delta_next
+end
+
+function criticality_measure(
+    g::Vector{T},
+    fix_bounds::BitVector,
+    A::Matrix{T},
+    chol_aug_aat::Cholesky{T, Matrix{T}}) where T 
+
+    if any(fix_bounds)
+        crit = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+    else
+        crit = norm_reduced_gradient(g,A,chol_aug_aat)
+    end
+
+    return crit
+end
 
 function norm_reduced_gradient(
     g::Vector{T},
