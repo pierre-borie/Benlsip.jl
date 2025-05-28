@@ -153,19 +153,20 @@ function initial_tolerances(
     k_crit::T,
     k_feas::T) where T
 
-    omega = omega0 * mu ^ (-k_crit)
-    eta = eta0 * mu ^ (-k_feas)
+    omega = omega0 / (mu^k_crit)
+    eta = eta0 / (mu^k_feas)
     return omega, eta
 end
 
 #= TRALCNLSS stands for Trust Region Augmented Lagrangian Constrainted Nonlinear Least Squares Solver =#
 
-function tralcllss(x0::Vector{T},
+function tralcllss(
+    x0::Vector{T},
     y0::Vector{T},
-    residuals::Function,
-    jac_res::Function,
-    nlconstraints::Function,
-    jac_nlcons::Function,
+    residuals::F,
+    jac_res::F,
+    nlconstraints::F,
+    jac_nlcons::F,
     A::Matrix{T},
     b::Vector{T},
     x_l::Vector{T},
@@ -174,18 +175,96 @@ function tralcllss(x0::Vector{T},
     tau::T = T(100),
     omega0::T = T(1),
     eta0::T = T(1),
+    feas_tol::T,
+    crit_tol::T,
     k_crit::T = T(1),
     k_feas::T = T(0.1),
     beta_crit::T = T(1),
-    beta_feas::T = 0.9) where T
+    beta_feas::T = T(0.9),
+    eta1::T,
+    eta2::T,
+    gamma1::T,
+    gamma2::T,
+    gamma_c::T,
+    kappa0::T,
+    kappa2::T,
+    kappa3::T,
+    max_outer_iter::Int=500,
+    max_inner_iter::Int=500,
+    max_minor_iter::Int=50) where {T<:Real, F<:Function}
 
-    # Initialize tolerances
-    omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas)
+    # Sanity check
+    @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
 
-    # Instantiate the augmented Lagrangian
+    # Initializations
+    n = size(x0)
+    chol_aat = cholesky_aat(A) # Cholesky decomposition of AAᵀ
+    x = Vector{T}(undef,n)
+    x[:] = x0[:]
+    cx = nlconstraints(x)
+    mu = mu0
+
+
+    omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas) # tolerances 
+    y = least_squares_multipliers(x,residuals,jac_res,jac_nlcons) # Initial Lagrange multipliers 
+
+    first_order_critical = false
+    outer_iter = 1
+
+    while !first_order_critical && outer_iter <= max_outer_iter
+
+        x_next, cx_next, pix = solve_subproblem(x,
+        y,
+        mu,
+        residuals,
+        nlconstraints,
+        jac_res,
+        jac_nlcons,
+        A,
+        chol_aat,
+        b,
+        x_l,
+        x_u,
+        max_minor_iter,
+        max_inner_iter,
+        omega,
+        eta1,
+        eta2,
+        gamma1,
+        gamma2,
+        gamma_c,
+        kappa0,
+        kappa2,
+        kappa3)
+
+        feas_measure = norm(cx_next)
+
+        if feas_measure <= eta
+            x .= x_next
+            cx .= cx_next
+            first_order_critical = pix <= crit_tol && feas_measure <= feas_tol
+
+            if !first_order_critical
+                # Update the iterate, multipliers and decrease tolerances (penalty parameter is unchanged)
+                y = first_order_multipliers(y,cx,mu)
+                omega /= mu^(beta_crit)
+                eta /= mu^(beta_feas)
+            end
+        else
+            # Increase the penalty parameter lesser decrease of the tolerances,  (iterate and multipliers are unchanged)
+            mu *= tau
+            omega = omega0 / (mu^k_crit)
+            eta = eta0 / (mu^k_feas)   
+        end
+
+        outer_iter += 1
+
+    end
+
     
     
-    return
+    
+    return x, y
 end
 
 
@@ -194,19 +273,18 @@ Approximately minimize the Augmented Lagrangian function with respect to the pri
 function solve_subproblem(x0::Vector{T},
     y::Vector{T},
     mu::T,
-    residuals::Function,
-    nlconstraints::Function,
-    jac_res::Function,
-    jac_nlcons::Function,
+    residuals::F,
+    nlconstraints::F,
+    jac_res::F,
+    jac_nlcons::F,
     A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}},
     b::Vector{T},
     x_l::Vector{T},
     x_u::Vector{T},
-    delta0::T,
     nb_minor_step::Int,
     k_max::Int,
-    omega_tol::T;
+    omega_tol::T,
     eta1::T,
     eta2::T,
     gamma1::T,
@@ -214,20 +292,20 @@ function solve_subproblem(x0::Vector{T},
     gamma_c::T,
     kappa0::T,
     kappa2::T,
-    kappa3::T) where T
+    kappa3::T) where {T<:Real, F<:Function}
 
 
-    # Constants sanity check
-    @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
+    
 
     # Dimensions
-    (m,n) = size(A)
+    (_,n) = size(A)
     x = Vector{T}(undef,n)
+    x[:] = x0[:]
     rx, cx, y_bar, mx, g, H = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
 
-    x[:] = x0[:]
+    
     t = T(1)
-    delta = delta0
+    delta = initial_tr(g)
     k = 1
     solved = false
 
@@ -259,7 +337,7 @@ function solve_subproblem(x0::Vector{T},
         k += 1
     end
 
-    return
+    return x, cx, pix
 end
 
 """ inner_step(x,g,H,A,chol_AAᵀ,b,xₗ,xᵤ,Δ,nb_minor_step,κ₀,κ₂,κ₃,γc)
@@ -569,6 +647,15 @@ function factor_to_boundary(
     return gamma
 end
 
+""" initial_tr(g; factor)
+
+Computes the initial trust region radius by taking a factor of the norm of 'g', the gradient of the model.
+
+Returns 'factor * ||g||' with 'factor' default value set to '0.1'.
+"""
+function initial_tr(g::Vector{T};tr_factor::T=T(0.1)) where T
+    return tr_factor * norm(g)
+end
 
 function update_tr(
     delta::T,
@@ -631,8 +718,32 @@ function norm_reduced_gradient(
 end
 
 # TODO: implement a method to compute initial lagrange multipliers
-function initial_lagrange_multipliers() end
-# Method the case with no active bounds
+function least_squares_multipliers(
+    x::Vector{T},
+    residuals::F,
+    jac_res::F,
+    jac_nlcons::F) where {T, F<:Function}
+    
+    g = jac_res(x)' * residuals(x) # gradient 
+    C = jac_nlcons(x)
+    chol_cct = cholesky(C*C') 
+    y = begin   
+        b = -C*g
+        v = chol_cct.L \ b
+        chol_cct.U \ v 
+    end
+    
+    return y 
+end
+
+function first_order_multipliers(
+    y::Vector{T},
+    cx::Vector{T},
+    mu::T) where T
+
+    return y + mu*cx
+end
+
 
 
 #= Compute an approximate Cauchy point by finding the first local minimum of a piecewise quadratic path 
