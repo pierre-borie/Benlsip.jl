@@ -183,7 +183,7 @@ function tralcllss(x0::Vector{T},
     omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas)
 
     # Instantiate the augmented Lagrangian
-    aug_lag = AugmentedLagrangian(residuals, nlconstraints, mu0)
+    
     
     return
 end
@@ -218,7 +218,7 @@ function solve_subproblem(x0::Vector{T},
 
 
     # Constants sanity check
-    @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 <= gamma2) "Invalid trust region updates paramaters"
+    @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
 
     # Dimensions
     (m,n) = size(A)
@@ -256,6 +256,7 @@ function solve_subproblem(x0::Vector{T},
         
         # Termination criteria 
         solved = pix < omega_tol
+        k += 1
     end
 
     return
@@ -568,13 +569,6 @@ function factor_to_boundary(
     return gamma
 end
 
-#= Return the norm of the reduced gradient 'Ñᵀg'
-    
-    * 'g' is the gradient of the augmented Lagrangian at current iterate
-
-    * 'Ñ' is an orthonormal matrix representing the null space of current active linear constraints
-
-=#
 
 function update_tr(
     delta::T,
@@ -610,6 +604,13 @@ function criticality_measure(
     return crit
 end
 
+#= Return the norm of the reduced gradient 'Ñᵀg'
+    
+    * 'g' is the gradient of the augmented Lagrangian at current iterate
+
+    * 'Ñ' is an orthonormal matrix representing the null space of current active linear constraints
+
+=#
 function norm_reduced_gradient(
     g::Vector{T},
     A::Matrix{T},
@@ -628,6 +629,9 @@ function norm_reduced_gradient(
     reduced_g = projection(A,chol_aat,g)
     return norm(reduced_g)
 end
+
+# TODO: implement a method to compute initial lagrange multipliers
+function initial_lagrange_multipliers() end
 # Method the case with no active bounds
 
 
