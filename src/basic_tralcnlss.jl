@@ -162,7 +162,6 @@ end
 
 function tralcllss(
     x0::Vector{T},
-    y0::Vector{T},
     residuals::F,
     jac_res::F,
     nlconstraints::F,
@@ -175,23 +174,23 @@ function tralcllss(
     tau::T = T(100),
     omega0::T = T(1),
     eta0::T = T(1),
-    feas_tol::T,
-    crit_tol::T,
+    feas_tol::T = sqrt(eps(T)),
+    crit_tol::T = sqrt(eps(T)),
     k_crit::T = T(1),
     k_feas::T = T(0.1),
     beta_crit::T = T(1),
     beta_feas::T = T(0.9),
-    eta1::T,
-    eta2::T,
-    gamma1::T,
-    gamma2::T,
-    gamma_c::T,
-    kappa0::T,
-    kappa2::T,
-    kappa3::T,
-    max_outer_iter::Int=500,
-    max_inner_iter::Int=500,
-    max_minor_iter::Int=50) where {T<:Real, F<:Function}
+    eta1::T = T(0.25),
+    eta2::T = T(0.75),
+    gamma1::T = T(0.0625),
+    gamma2::T = T(2),
+    gamma_c::T = T(10),
+    kappa0::T = T(1e-2),
+    kappa2::T = T(0.1),
+    kappa3::T = T(0.1),
+    max_outer_iter::Int = 500,
+    max_inner_iter::Int = 500,
+    max_minor_iter::Int = 50) where {T<:Real, F<:Function}
 
     # Sanity check
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
@@ -372,6 +371,7 @@ function inner_step(
     gamma_c::T) where T
 
     s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa0,gamma_c)
+
     g_minor = H*s+g
     fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
 
