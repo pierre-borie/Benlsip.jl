@@ -41,7 +41,7 @@ function cholesky_aug_aat(
     return Cholesky(L)
 end
 
-cholesky_aat(A::Matrix{T}) where T = Cholesky(A*A')
+cholesky_aat(A::Matrix{T}) where T = cholesky(A*A')
 
 #= The following methods perform the left multiplication by 'Ã' and 'Ãᵀ' 
 Methods are implemented in both in place and out-of-place versions =#

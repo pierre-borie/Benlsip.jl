@@ -1,3 +1,5 @@
+export tralcnllss
+
 abstract type TralcnllsData end
 
 mutable struct AlHessian{T<:Real} <: TralcnllsData
@@ -30,10 +32,10 @@ function new_point(
     x::Vector{T},
     y::Vector{T},
     mu::T,
-    residuals::F,
-    nlconstraints::F,
-    jac_res::F,
-    jac_nlcons::F) where {T, F<:Function}
+    residuals::F1,
+    nlconstraints::F2,
+    jac_res::F3,
+    jac_nlcons::F4) where {T, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
 
     rx, cx = residuals(x), nlconstraints(x)
     Jx, Cx = jac_res(x), jac_nlcons(x)
@@ -48,8 +50,8 @@ end
 function evaluate_al(
     x::Vector{T},
     mu::T,
-    residuals::F,
-    nlconstraints::F) where {T, F<:Function}
+    residuals::F1,
+    nlconstraints::F2) where {T<:Real, F1<:Function, F2<:Function}
 
     rx, cx = residuals(x), nlconstraints(x)
     mx = 0.5*dot(rx,rx) * 0.5*mu*dot(cx,cx) # objective function
@@ -62,8 +64,8 @@ function first_derivatives(
     mu::T,
     rx::Vector{T},
     cx::Vector{T},
-    jac_res::F,
-    jac_nlcons::F) where {T, F<:Function}
+    jac_res::F1,
+    jac_nlcons::F2) where {T, F1<:Function, F2<:Function}
 
     Jx, Cx = jac_res(x), jac_nlcons(x)
     y_bar = y + mu*cx # first-order multipliers estimates
@@ -160,12 +162,12 @@ end
 
 #= TRALCNLSS stands for Trust Region Augmented Lagrangian Constrainted Nonlinear Least Squares Solver =#
 
-function tralcllss(
+function tralcnllss(
     x0::Vector{T},
-    residuals::F,
-    jac_res::F,
-    nlconstraints::F,
-    jac_nlcons::F,
+    residuals::F1,
+    jac_res::F2,
+    nlconstraints::F3,
+    jac_nlcons::F4,
     A::Matrix{T},
     b::Vector{T},
     x_l::Vector{T},
@@ -185,12 +187,12 @@ function tralcllss(
     gamma1::T = T(0.0625),
     gamma2::T = T(2),
     gamma_c::T = T(10),
-    kappa0::T = T(1e-2),
+    kappa1::T = T(1e-2),
     kappa2::T = T(0.1),
     kappa3::T = T(0.1),
     max_outer_iter::Int = 500,
     max_inner_iter::Int = 500,
-    max_minor_iter::Int = 50) where {T<:Real, F<:Function}
+    max_minor_iter::Int = 50) where {T<:Real, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
 
     # Sanity check
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
@@ -206,12 +208,15 @@ function tralcllss(
 
     omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas) # tolerances 
     y = least_squares_multipliers(x,residuals,jac_res,jac_nlcons) # Initial Lagrange multipliers 
+    println("initial multipiers ", y)
 
     first_order_critical = false
     outer_iter = 1
 
     while !first_order_critical && outer_iter <= max_outer_iter
 
+        println("[tralcnllss] outer iter ", outer_iter)
+        
         x_next, cx_next, pix = solve_subproblem(x,
         y,
         mu,
@@ -232,9 +237,11 @@ function tralcllss(
         gamma1,
         gamma2,
         gamma_c,
-        kappa0,
+        kappa1,
         kappa2,
         kappa3)
+
+        @show x_next
 
         feas_measure = norm(cx_next)
 
@@ -256,13 +263,11 @@ function tralcllss(
             eta = eta0 / (mu^k_feas)   
         end
 
+        @show x
         outer_iter += 1
 
     end
 
-    
-    
-    
     return x, y
 end
 
@@ -272,10 +277,10 @@ Approximately minimize the Augmented Lagrangian function with respect to the pri
 function solve_subproblem(x0::Vector{T},
     y::Vector{T},
     mu::T,
-    residuals::F,
-    nlconstraints::F,
-    jac_res::F,
-    jac_nlcons::F,
+    residuals::F1,
+    nlconstraints::F2,
+    jac_res::F3,
+    jac_nlcons::F4,
     A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}},
     b::Vector{T},
@@ -289,9 +294,9 @@ function solve_subproblem(x0::Vector{T},
     gamma1::T,
     gamma2::T,
     gamma_c::T,
-    kappa0::T,
+    kappa1::T,
     kappa2::T,
-    kappa3::T) where {T<:Real, F<:Function}
+    kappa3::T) where {T<:Real, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
 
 
     
@@ -302,25 +307,25 @@ function solve_subproblem(x0::Vector{T},
     x[:] = x0[:]
     rx, cx, y_bar, mx, g, H = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
 
-    
+    pix = Inf
     t = T(1)
     delta = initial_tr(g)
     k = 1
     solved = false
-
+    
     while !solved && k <= k_max
+        # println("[solve_subproblem] inner iter ", k)
         # step and model reduction
-        s, t, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa0,kappa2,kappa3,gamma_c)
+        s, t, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
 
         x_next = x+s
-        rx_next, cx_next, mx_next = evaluate_al(x,mu,residuals,nlconstraints)
+        rx_next, cx_next, mx_next = evaluate_al(x_next, mu, residuals, nlconstraints)
         ared = mx_next - mx
-
         rho = ared / pred
 
         if rho > eta1
             x .= x_next
-            rx[:], cx[:], mx[:] = rx_next[:], cx_next[:], mx_next[:]
+            rx[:], cx[:], mx = rx_next[:], cx_next[:], mx_next
             y_bar, J, C, g = first_derivatives(x,y,mu,rx,cx,jac_res,jac_nlcons)
             H = second_derivatives(J,C,mu)
         end
@@ -365,12 +370,14 @@ function inner_step(
     delta::T,
     t0::T,
     nb_minor_step::Int,
-    kappa0::T,
+    kappa1::T,
     kappa2::T,
     kappa3::T,
     gamma_c::T) where T
 
-    s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa0,gamma_c)
+    (m,n) = size(A)
+
+    s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa1,gamma_c)
 
     g_minor = H*s+g
     fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
@@ -382,10 +389,13 @@ function inner_step(
 
     approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
 
+    allowed_minor_step = max(n-m-count(fix_bounds))
+    max_minor_step = min(nb_minor_step, allowed_minor_step)
     cg_stop  = false
 
     # Minor iterates loop
-    while j <= nb_minor_step && !approx_solved && !cg_stop
+    while j <= max_minor_step && !approx_solved && !cg_stop
+        # println("[inner_step] minor iterate ", j)
 
         # descent direction and termination status of the cg iterations
         w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
@@ -395,7 +405,7 @@ function inner_step(
 
         # Loop termination criteria
         norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
-        norm_reduced_g_minor =  norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+        norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
         approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
         cg_stop = cg_status == negative_curvature
         j += 1
@@ -416,22 +426,23 @@ function cauchy_step(
     x_u::Vector{T},
     delta::T,
     t0::T,
-    kappa0::T,
+    kappa1::T,
     gamma_c::T) where T
 
     # Bounds on the step 
     t_trial = t0
+    t_small = 1e-6
     s = projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
 
     increase = false
-    s_infnorm = norm(Inf,s)
+    s_infnorm = norm(s,Inf)
     if s_infnorm > delta
         increase = false
     else
         gts = dot(g,s)
         # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
         qs = 0.5*vthv(H,s) +  gts
-        progress = qs <= kappa0 * gts
+        progress = qs <= kappa1 * gts
     end
 
     if increase
@@ -440,12 +451,12 @@ function cauchy_step(
         while progress
             t_trial *= gamma_c
             s = projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
-            s_infnorm = norm(Inf,s)
+            s_infnorm = norm(s,Inf)
             if s_infnorm <= delta
                 gts = dot(g,s)
                 # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
                 qs = 0.5*vthv(H,s) +  gts
-                progress = qs <= kappa0 * gts
+                progress = qs <= kappa1 * gts
                 if progress t_c = t_trial end 
             else
                 progress = false
@@ -453,15 +464,15 @@ function cauchy_step(
         end
     else
         satisfied = false
-        while !satisfied
+        while !satisfied && t_trial > t_small
             t_trial /= gamma_c
             s =  projection_polyhedron(x-t_trial*g, A, b, x_l, x_u) - x
-            s_infnorm = norm(Inf,s)
+            s_infnorm = norm(s,Inf)
             if s_infnorm <= delta
                 gts = dot(g,s)
                 # qs = 0.5*s_inner_hs(s,mu,J,C) + gts
                 qs = 0.5*vthv(H,s) +  gts
-                satisfied = qs <= kappa0 * gts
+                satisfied = qs <= kappa1 * gts
             end
         end
         t_c = t_trial
@@ -557,7 +568,8 @@ function projected_cg(
     neg_curvature = false
     outside_region = false
 
-    while !(approx_solved || outside_region || neg_curvature || iter <= max_iter)
+    while !approx_solved && !outside_region && !neg_curvature && iter <= max_iter
+        # println("[projected_cg] iter ", iter)
         Hp = H*p
         pHp = dot(p,Hp)
 
@@ -573,7 +585,7 @@ function projected_cg(
 
             gamma = factor_to_boundary(p,w,w_l,w_u)
             outside_region = alpha > gamma
-            if bound_hit
+            if outside_region
                 w .+= gamma * p
             else 
                 w .+= alpha*p
@@ -717,12 +729,11 @@ function norm_reduced_gradient(
     return norm(reduced_g)
 end
 
-# TODO: implement a method to compute initial lagrange multipliers
 function least_squares_multipliers(
     x::Vector{T},
-    residuals::F,
-    jac_res::F,
-    jac_nlcons::F) where {T, F<:Function}
+    residuals::F1,
+    jac_res::F2,
+    jac_nlcons::F3) where {T<:Real, F1<:Function, F2<:Function, F3<:Function}
     
     g = jac_res(x)' * residuals(x) # gradient 
     C = jac_nlcons(x)
