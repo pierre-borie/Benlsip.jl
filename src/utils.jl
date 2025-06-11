@@ -37,7 +37,7 @@ function cholesky_aug_aat(
     # Forms the L factor of ÃÃᵀ Cholesy decomposition
     L[1:m,1:m] = chol_aat.L
     L[m+1:end,1:m] = G'
-    L[m+1:end,p+1:end] = cholesky(H).L  
+    L[m+1:end,m+1:end] = cholesky(H).L  
     return Cholesky(L)
 end
 
