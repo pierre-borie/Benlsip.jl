@@ -377,15 +377,17 @@ function inner_step(
 
     (m,n) = size(A)
 
-    s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa1,gamma_c)
+    # s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa1,gamma_c)
+    s, fix_bounds = cauchy_step(x,g,H,A,chol_aat,x_l,x_u,delta)
 
     g_minor = H*s+g
-    fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
+    chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+    # fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
 
     j = 1 # minor iterations index
 
     norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
-    norm_reduced_g_minor =  norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+    norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
 
     approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
 
@@ -481,6 +483,118 @@ function cauchy_step(
     # This computation is (likely) uneccessary, retrieving the cauchy step from above should be possible 
     s_c = projection_polyhedron(x-t_c*g, A, b, x_l, x_u) - x
     return s_c, t_c
+end
+
+
+""" next_breakpoint(d,s,dₗ,dᵤ,fix_bounds)
+
+Finds the smallest scalar 'θ' such that one component not in 'fix_bounds' of 's + θ*d' lies at one of the bounds 'dₗ' or 'dᵤ'.   
+
+Returns the scalar 'θ' and 'ind', the index of the component that becomes active.
+"""
+function next_breakpoint(
+        d::Vector{T},
+        s::Vector{T},
+        d_l::Vector{T},
+        d_u::Vector{T},
+        fix_bounds::BitVector) where T
+
+    theta = Inf
+    ind = -1
+
+    for i in axes(d,1)
+        if !fix_bounds[i]
+            if d[i] < 0
+                theta_try = (d_l[i]-s[i]) / d[i]
+            elseif d[i] > 0 
+                theta_try = (d_u[i]-s[i]) / d[i]
+            else theta_try = Inf
+            end
+
+            if theta_try < theta
+                theta = theta_try
+                ind = i
+            end
+        end
+    end
+    return theta, ind
+end
+
+""" cauchy_step(x,g,H,A,chol_AAᵀ,xₗ,xᵤ,Δ)
+
+Compute a Cauchy step that provides a sufficient reduction of the quadratic model 'q(s) = <s,Hs> + <g,s>'.
+
+The step is defined by 's_c = s(t_c)' , where 's(t)', for 't ≥ 0', is the projected gradient step 'P(x-t*g) - x' with 'P' denoting the projection over '{v | Av = 0 and max(-Δ,xₗ) ≤ x + v ≤ min(Δ,xᵤ)}.
+
+This method finds the first local minimum of the quadratic model along the projected gradient path, i.e. the first local minimum of 't ↦ q(s(t))' on '[0, ∞)'.
+
+Returns the associated Cauchy step 's_c' and 'fix_bounds', a 'BitVector' encoding the indices of active bounds at 'x + s_c' 
+"""
+function cauchy_step(
+        x::Vector{T},
+        g::Vector{T},
+        H::AlHessian,
+        A::Matrix{T},
+        chol_aat::Cholesky{T,Matrix{T}},
+        x_l::Vector{T},
+        x_u::Vector{T},
+        delta::T) where T
+
+    # Dimensions and constants
+    (m,n) = size(A)
+    nmm = n-m
+    atol = sqrt(eps(T))
+    # Buffers
+    s_c = zeros(n) # accumulated projected gradient step
+    t = zero(T) # scalar to store breakpoint value
+
+    # Initial active bounds
+    d = projection(A,chol_aat,-g)
+    fix_bounds = BitVector(map(t -> abs(t) < atol, d))
+    
+    if any(fix_bounds)
+        chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+        projection!(d,A,chol_aug_aat,fix_bounds,-g)
+    end
+  
+    # Upper and lower bounds for the Cauchy step
+    d_u = (t -> min(t, delta)).(x_u-x)
+    d_l = (t -> max(t, -delta)).(x_l-x)
+    
+    # slope and curvature on the current interval
+    # chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+    #d = projection(A, chol_aug_aat, ifix, -g)
+    # d = projection(A,chol_aat,-g)
+    Hd = H*d
+    phi_p = dot(s_c,Hd) + dot(g,d)
+    phi_pp = dot(d,Hd)
+    
+    min_found = false
+
+    while !min_found && (count(fix_bounds) < nmm)
+        
+        theta, ind = next_breakpoint(d,s_c,d_l,d_u,fix_bounds)
+        delta_t = (phi_pp > 0 ? -phi_p / phi_pp : zero(T))
+
+        if phi_p >= 0 # local minimum at t
+            min_found = true
+        elseif phi_p < 0 && phi_pp > 0 && delta_t < theta
+            delta_t = -phi_p / phi_pp
+            delta_t < theta # local minimum at t - phi_p / phi_pp
+            s_c[:] += delta_t*d
+            min_found = true
+        else # no local minimum in [t, t+theta), prepare for the next interval 
+            s_c[:] += theta*d[:]
+            fix_bounds[ind] = true
+            chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+            projection!(d,A, chol_aug_aat, fix_bounds, -g)
+            Hd[:] = H*d
+            phi_p = dot(s_c,Hd) + dot(g,d)
+            phi_pp = dot(d,Hd)
+        end
+    end
+    @show min_found, count(fix_bounds) == nmm
+    return s_c, fix_bounds
 end
 
 """ minor_iterate(x,s,g,H,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
