@@ -23,7 +23,7 @@ function cholesky_aug_aat(
     (m,n) = size(A)
     p = count(fix_bounds)
     mpp = m+p
-    @assert mpp < n 
+    @assert mpp <= n 
 
     # Auxiliary buffer arrays 
     H = Matrix{T}(I,p,p)
@@ -120,7 +120,7 @@ function projection!(v::Vector{T},
     (m,n) = size(A)
     p = count(fix_bounds)
     mpp = m+p
-    @assert mpp < n 
+    @assert mpp <= n 
 
     w, y = Vector{T}(undef,mpp), Vector{T}(undef,mpp) # auxiliary vectors
     

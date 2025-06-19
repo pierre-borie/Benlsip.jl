@@ -1,5 +1,7 @@
 export tralcnllss
 
+const verbose = true
+const file_name = "./output/benlsip.out"
 abstract type TralcnllsData end
 
 mutable struct AlHessian{T<:Real} <: TralcnllsData
@@ -196,7 +198,7 @@ function tralcnllss(
 
     # Sanity check
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
-
+    
     # Initializations
     n = size(x0)
     chol_aat = cholesky_aat(A) # Cholesky decomposition of AAᵀ
@@ -208,14 +210,14 @@ function tralcnllss(
 
     omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas) # tolerances 
     y = least_squares_multipliers(x,residuals,jac_res,jac_nlcons) # Initial Lagrange multipliers 
-    println("initial multipiers ", y)
+    # println("initial multipiers ", y)
 
     first_order_critical = false
     outer_iter = 1
 
     while !first_order_critical && outer_iter <= max_outer_iter
 
-        println("[tralcnllss] outer iter ", outer_iter)
+        verbose && println("\n[tralcnllss] outer iter ", outer_iter)
         
         x_next, cx_next, pix = solve_subproblem(x,
         y,
@@ -241,26 +243,30 @@ function tralcnllss(
         kappa2,
         kappa3)
 
-        @show x_next
 
         feas_measure = norm(cx_next)
 
         if feas_measure <= eta
+            verbose && println("[tralcnllss] feasibility: $feas_measure, tol: $eta")
             x .= x_next
             cx .= cx_next
             first_order_critical = pix <= crit_tol && feas_measure <= feas_tol
 
             if !first_order_critical
+                verbose && println("[tralcnllss] multipliers updated")
                 # Update the iterate, multipliers and decrease tolerances (penalty parameter is unchanged)
                 y = first_order_multipliers(y,cx,mu)
                 omega /= mu^(beta_crit)
                 eta /= mu^(beta_feas)
+                verbose && println("[tralcnllss] new tolerances: omega= $feas_measure, eta= $eta")
             end
         else
             # Increase the penalty parameter lesser decrease of the tolerances,  (iterate and multipliers are unchanged)
+            verbose && println("[tralcnllss] penalty parameter increased")
             mu *= tau
             omega = omega0 / (mu^k_crit)
             eta = eta0 / (mu^k_feas)   
+            verbose && println("[tralcnllss] new tolerances: mu = $mu omega= $feas_measure, eta= $eta")
         end
 
         @show x
@@ -310,13 +316,14 @@ function solve_subproblem(x0::Vector{T},
     pix = Inf
     t = T(1)
     delta = initial_tr(g)
+    verbose && println("[solve_subproblem] initial radius: $delta")
     k = 1
     solved = false
     
     while !solved && k <= k_max
-        # println("[solve_subproblem] inner iter ", k)
+        println("[solve_subproblem] inner iter ", k)
         # step and model reduction
-        s, t, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
+        s, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
 
         x_next = x+s
         rx_next, cx_next, mx_next = evaluate_al(x_next, mu, residuals, nlconstraints)
@@ -324,6 +331,7 @@ function solve_subproblem(x0::Vector{T},
         rho = ared / pred
 
         if rho > eta1
+            verbose && println("[solve_subproblem] step accepted: $(rho > eta1)")
             x .= x_next
             rx[:], cx[:], mx = rx_next[:], cx_next[:], mx_next
             y_bar, J, C, g = first_derivatives(x,y,mu,rx,cx,jac_res,jac_nlcons)
@@ -415,7 +423,7 @@ function inner_step(
 
     # Evaluate the reduction of the quadratic model 
     model_reduction = dot(s,g_minor)
-    return s, t_c, model_reduction, fix_bounds, chol_aug_aat
+    return s, model_reduction, fix_bounds, chol_aug_aat
 end
 
 function cauchy_step(
@@ -593,7 +601,6 @@ function cauchy_step(
             phi_pp = dot(d,Hd)
         end
     end
-    @show min_found, count(fix_bounds) == nmm
     return s_c, fix_bounds
 end
 
@@ -798,7 +805,7 @@ function update_tr(
     else # successful step 
         delta 
     end
-    
+    verbose && println("[update_tr] radius: $delta, next radius: $delta_next")
     return delta_next
 end
 
