@@ -31,6 +31,8 @@ jac_c(x::Vector) = [2*x[1] 2*x[2] 2*x[3]]
 # Starting point 
 x0 = [1.0, 0.5, 1.5]
 
+verbose = false
+
 @testset "Hessian structure" begin
     Jx0 = jac_r(x0)
     Cx0 = jac_c(x0)
@@ -47,32 +49,34 @@ x0 = [1.0, 0.5, 1.5]
     @test Hx ≈ greedy_Hx
     @test xtHx ≈ greedy_xtHx
 end
-# @testset "Intermediate methods" begin
+@testset "Intermediate methods" begin
    
-#     x_sol, y_sol = tralcnllss(x0,
-#     r,
-#     jac_r,
-#     c,
-#     jac_c,
-#     A,
-#     b,
-#     x_l,
-#     x_u;
-#     max_outer_iter=100,
-#     max_inner_iter=250)
+    x_sol, y_sol = tralcnllss(x0,
+    r,
+    jac_r,
+    c,
+    jac_c,
+    A,
+    b,
+    x_l,
+    x_u;
+    max_outer_iter=100,
+    max_inner_iter=250)
 
-#     @show x_sol
-#     @show y_sol
-#     rx_sol = r(x_sol)
-#     Jx_sol = jac_r(x_sol)
-#     Cx_sol = jac_c(x_sol)
-#     cx_sol = c(x_sol)
-#     @show cx_sol
-#     norm_∇lag = norm(Jx_sol'*rx_sol - Cx_sol'*y_sol)
-#     @show norm_∇lag
-#     atol = sqrt(eps(Float64))
-
-#     @test norm(cx_sol) < atol
-#     @test BEnlsip.is_feasible(x_sol,A,x_l,x_u;b=b)
-#     @test norm_∇lag < atol
-# end
+    verbose && @show x_sol
+    verbose && @show y_sol
+    rx_sol = r(x_sol)
+    Jx_sol = jac_r(x_sol)
+    Cx_sol = jac_c(x_sol)
+    cx_sol = c(x_sol)
+    verbose && @show cx_sol
+    ∇lag = Jx_sol'*rx_sol + Cx_sol'*y_sol
+    p_xm∇lag = BEnlsip.projection_polyhedron(x_sol-∇lag,A,b,x_l,x_u)
+    opt_measure = norm(x_sol-p_xm∇lag)
+    verbose && @show opt_measure
+    feas_tol = sqrt(eps(Float64))
+    opt_tol = 1e-7
+    @test norm(cx_sol) < feas_tol
+    @test BEnlsip.is_feasible(x_sol,A,x_l,x_u;b=b)
+    @test opt_measure < opt_tol
+end

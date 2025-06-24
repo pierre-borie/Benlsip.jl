@@ -1,6 +1,6 @@
 export tralcnllss
 
-const verbose = true
+const verbose = false
 const file_name = "./output/benlsip.out"
 abstract type TralcnllsData end
 
@@ -42,7 +42,7 @@ function new_point(
     rx, cx = residuals(x), nlconstraints(x)
     Jx, Cx = jac_res(x), jac_nlcons(x)
     y_bar = y + mu*cx 
-    mx = 0.5*dot(rx,rx) * 0.5*mu*dot(cx,cx) # objective function
+    mx = 0.5*dot(rx,rx) + dot(y,cx) + 0.5*mu*dot(cx,cx) # objective function
     g = Jx'*rx + Cx'*y_bar # gradient
     H = AlHessian(Jx,Cx,mu) # Hessian
 
@@ -51,12 +51,13 @@ end
 
 function evaluate_al(
     x::Vector{T},
+    y::Vector{T},
     mu::T,
     residuals::F1,
     nlconstraints::F2) where {T<:Real, F1<:Function, F2<:Function}
 
     rx, cx = residuals(x), nlconstraints(x)
-    mx = 0.5*dot(rx,rx) * 0.5*mu*dot(cx,cx) # objective function
+    mx = 0.5*dot(rx,rx) + dot(y,cx) + 0.5*mu*dot(cx,cx) # objective function
     return rx, cx, mx
 end
 
@@ -280,7 +281,8 @@ end
 
 #= Solves the sub problem of an outer iteration
 Approximately minimize the Augmented Lagrangian function with respect to the primal variable with tolerance ω > 0=#
-function solve_subproblem(x0::Vector{T},
+function solve_subproblem(
+    x0::Vector{T},
     y::Vector{T},
     mu::T,
     residuals::F1,
@@ -321,17 +323,20 @@ function solve_subproblem(x0::Vector{T},
     solved = false
     
     while !solved && k <= k_max
-        println("[solve_subproblem] inner iter ", k)
+        verbose && println("======== inner iter $k ========= ", k)
         # step and model reduction
         s, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
 
         x_next = x+s
-        rx_next, cx_next, mx_next = evaluate_al(x_next, mu, residuals, nlconstraints)
+        rx_next, cx_next, mx_next = evaluate_al(x_next, y, mu, residuals, nlconstraints)
         ared = mx_next - mx
         rho = ared / pred
 
+        verbose && println("[solve_subproblem] ared: $ared, pred: $pred, ratio: $rho")
+
         if rho > eta1
             verbose && println("[solve_subproblem] step accepted: $(rho > eta1)")
+            verbose && println("[solve_subproblem] next point: $x_next")
             x .= x_next
             rx[:], cx[:], mx = rx_next[:], cx_next[:], mx_next
             y_bar, J, C, g = first_derivatives(x,y,mu,rx,cx,jac_res,jac_nlcons)
@@ -343,6 +348,9 @@ function solve_subproblem(x0::Vector{T},
 
         # Compute criticality measure
         pix = criticality_measure(g,fix_bounds,A,chol_aug_aat)
+        #pix = criticality_measure(x,g,A,b,x_l,x_u)
+        verbose && @show my_pix, pix
+        verbose && println("[solve_subproblem] criticality measure: $pix")
         
         # Termination criteria 
         solved = pix < omega_tol
@@ -409,6 +417,8 @@ function inner_step(
 
         # descent direction and termination status of the cg iterations
         w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
+        verbose && println("[inner_step] check it is descent direction: $(dot(w,g_minor) < 0)")
+    
         s .+= w # cumulated step 
         g_minor = H*s+g
         fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat) # New active set
@@ -422,7 +432,8 @@ function inner_step(
     end
 
     # Evaluate the reduction of the quadratic model 
-    model_reduction = dot(s,g_minor)
+    model_reduction = dot(g,s) + 0.5*vthv(H,s)
+    verbose && println("[inner_step] model reduction: $model_reduction, step: $s")
     return s, model_reduction, fix_bounds, chol_aug_aat
 end
 
@@ -639,7 +650,7 @@ function minor_iterate(
 
     if cg_status != negative_curvature
         alpha = linesearch(g_model, H, w, w_l, w_u, fixed_var)
-        w .+= alpha * w
+        w .= alpha * w
     end
 
     return w, cg_status
@@ -654,13 +665,13 @@ s.t. Aw = 0
      wᵢ = 0,    i ∈ fix_bounds
      wₗ ≤ w ≤ wᵤ
 
-with respect to 'w' and using the projected conjugate gradient method
+with respect to 'w' and using the projected conjugate gradient method with early termination if a direction hits a bound.
 
 Returns the obtained descent direction and the termination status, encoded in the 'Enum' [`CG_status`](@ref)
 """
 
 function projected_cg(
-    r0::Vector{T},
+    g_minor::Vector{T},
     H::AlHessian{T},
     A::Matrix{T},
     w_l::Vector{T},
@@ -674,8 +685,9 @@ function projected_cg(
     
     # Initialization
     w = zeros(n)
+    r = zeros(n)
     # r = H*s + g
-    r = r0
+    r[:] = g_minor[:]
     v = projection(A,chol_aug_aat,fix_bounds,r)
     rtv = dot(r,v)
     p = -v
@@ -824,6 +836,22 @@ function criticality_measure(
     return crit
 end
 
+#= Compute the criticality measure ||P(x-∇f)-x|| where P[.] denotes the orthogonal projection on {x | Ax=b, xₗ ≤ x ≤ xᵤ}
+
+=#
+
+function criticality_measure(
+    x::Vector{T},
+    g::Vector{T},
+    A::Matrix{T},
+    b::Vector{T},
+    x_l::Vector{T},
+    x_u::Vector{T}) where T
+
+    p_xmg = projection_polyhedron(x-g,A,b,x_l,x_u)
+    return norm(p_xmg-x)
+end
+
 #= Return the norm of the reduced gradient 'Ñᵀg'
     
     * 'g' is the gradient of the augmented Lagrangian at current iterate
@@ -837,16 +865,17 @@ function norm_reduced_gradient(
     fix_bounds::BitVector,
     chol_aug_aat::Cholesky{T,Matrix{T}}) where T
 
-    reduced_g = projection(A,chol_aug_aat,fix_bounds,g)
+    reduced_g = projection(A,chol_aug_aat,fix_bounds,-g)
     return norm(reduced_g)
 end
+
 
 function norm_reduced_gradient(
     g::Vector{T},
     A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}}) where T
 
-    reduced_g = projection(A,chol_aat,g)
+    reduced_g = projection(A,chol_aat,-g)
     return norm(reduced_g)
 end
 
