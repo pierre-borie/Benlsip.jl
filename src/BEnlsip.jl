@@ -1,10 +1,10 @@
 module BEnlsip
 
 # Packages
-using LinearAlgebra, JuMP, Ipopt
+using LinearAlgebra, JuMP, Ipopt, Printf
 
 # Files
-for f in ["utils", "basic_tralcnlss"]
+for f in ["misc", "utils", "basic_tralcnlss"]
     include("./$f.jl")
 end
 

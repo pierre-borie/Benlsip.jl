@@ -1,7 +1,7 @@
 export tralcnllss
 
-const verbose = false
-const file_name = "./output/benlsip.out"
+const verbose = true
+const output_file_name = "../test/output/benlsip.out"
 abstract type TralcnllsData end
 
 mutable struct AlHessian{T<:Real} <: TralcnllsData
@@ -199,14 +199,32 @@ function tralcnllss(
 
     # Sanity check
     @assert (0 < eta1 <= eta2 < 1) && (0 < gamma1 < 1 < gamma2) "Invalid trust region updates paramaters"
+
+    output_file = open(output_file_name, "w")
     
     # Initializations
-    n = size(x0)
+    (m,n) = size(A)
     chol_aat = cholesky_aat(A) # Cholesky decomposition of AAᵀ
     x = Vector{T}(undef,n)
     x[:] = x0[:]
+    rx = residuals(x)
     cx = nlconstraints(x)
     mu = mu0
+
+    verbose && print_tralcnllss_header(n,
+    size(rx,1),
+    size(cx,1),
+    m,
+    x_l,
+    x_u,
+    feas_tol,
+    crit_tol,
+    tau,
+    eta1,
+    eta2,
+    gamma1,
+    gamma2;
+    io=output_file)
 
 
     omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas) # tolerances 
@@ -216,65 +234,71 @@ function tralcnllss(
     first_order_critical = false
     outer_iter = 1
 
+    verbose && print_outer_iter_header(
+        outer_iter,
+        dot(rx,rx),
+        norm(cx),
+        mu,
+        0.0,
+        omega;
+        io = output_file,
+        first=true)
     while !first_order_critical && outer_iter <= max_outer_iter
 
-        verbose && println("\n[tralcnllss] outer iter ", outer_iter)
-        
-        x_next, cx_next, pix = solve_subproblem(x,
-        y,
-        mu,
-        residuals,
-        nlconstraints,
-        jac_res,
-        jac_nlcons,
-        A,
-        chol_aat,
-        b,
-        x_l,
-        x_u,
-        max_minor_iter,
-        max_inner_iter,
-        omega,
-        eta1,
-        eta2,
-        gamma1,
-        gamma2,
-        gamma_c,
-        kappa1,
-        kappa2,
-        kappa3)
+
+        x_next, cx_next, pix = solve_subproblem(
+            x,
+            y,
+            mu,
+            residuals,
+            nlconstraints,
+            jac_res,
+            jac_nlcons,
+            A,
+            chol_aat,
+            b,
+            x_l,
+            x_u,
+            max_minor_iter,
+            max_inner_iter,
+            omega,
+            eta1,
+            eta2,
+            gamma1,
+            gamma2,
+            gamma_c,
+            kappa1,
+            kappa2,
+            kappa3;
+            output_file=output_file)
 
 
         feas_measure = norm(cx_next)
 
         if feas_measure <= eta
-            verbose && println("[tralcnllss] feasibility: $feas_measure, tol: $eta")
             x .= x_next
             cx .= cx_next
             first_order_critical = pix <= crit_tol && feas_measure <= feas_tol
 
             if !first_order_critical
-                verbose && println("[tralcnllss] multipliers updated")
                 # Update the iterate, multipliers and decrease tolerances (penalty parameter is unchanged)
                 y = first_order_multipliers(y,cx,mu)
                 omega /= mu^(beta_crit)
                 eta /= mu^(beta_feas)
-                verbose && println("[tralcnllss] new tolerances: omega= $feas_measure, eta= $eta")
             end
         else
             # Increase the penalty parameter lesser decrease of the tolerances,  (iterate and multipliers are unchanged)
-            verbose && println("[tralcnllss] penalty parameter increased")
             mu *= tau
             omega = omega0 / (mu^k_crit)
             eta = eta0 / (mu^k_feas)   
-            verbose && println("[tralcnllss] new tolerances: mu = $mu omega= $feas_measure, eta= $eta")
         end
 
-        @show x
         outer_iter += 1
+        objective = begin rx = residuals(x); dot(rx,rx) end
+        verbose && print_outer_iter_header(outer_iter, objective, feas_measure, mu, pix, omega;io=output_file)
 
     end
-
+    close(output_file)
     return x, y
 end
 
@@ -304,12 +328,15 @@ function solve_subproblem(
     gamma_c::T,
     kappa1::T,
     kappa2::T,
-    kappa3::T) where {T<:Real, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
+    kappa3::T;
+    output_file::IO=stdout) where {T<:Real, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
 
 
     
 
     # Dimensions
+
+    
     (_,n) = size(A)
     x = Vector{T}(undef,n)
     x[:] = x0[:]
@@ -318,12 +345,10 @@ function solve_subproblem(
     pix = Inf
     t = T(1)
     delta = initial_tr(g)
-    verbose && println("[solve_subproblem] initial radius: $delta")
     k = 1
     solved = false
     
     while !solved && k <= k_max
-        verbose && println("======== inner iter $k ========= ", k)
         # step and model reduction
         s, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
 
@@ -332,11 +357,10 @@ function solve_subproblem(
         ared = mx_next - mx
         rho = ared / pred
 
-        verbose && println("[solve_subproblem] ared: $ared, pred: $pred, ratio: $rho")
+
+        verbose && print_inner_iter(k,mx,norm(s),delta,rho;io=output_file)
 
         if rho > eta1
-            verbose && println("[solve_subproblem] step accepted: $(rho > eta1)")
-            verbose && println("[solve_subproblem] next point: $x_next")
             x .= x_next
             rx[:], cx[:], mx = rx_next[:], cx_next[:], mx_next
             y_bar, J, C, g = first_derivatives(x,y,mu,rx,cx,jac_res,jac_nlcons)
@@ -349,8 +373,6 @@ function solve_subproblem(
         # Compute criticality measure
         pix = criticality_measure(g,fix_bounds,A,chol_aug_aat)
         #pix = criticality_measure(x,g,A,b,x_l,x_u)
-        verbose && @show my_pix, pix
-        verbose && println("[solve_subproblem] criticality measure: $pix")
         
         # Termination criteria 
         solved = pix < omega_tol
@@ -417,7 +439,6 @@ function inner_step(
 
         # descent direction and termination status of the cg iterations
         w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
-        verbose && println("[inner_step] check it is descent direction: $(dot(w,g_minor) < 0)")
     
         s .+= w # cumulated step 
         g_minor = H*s+g
@@ -433,7 +454,6 @@ function inner_step(
 
     # Evaluate the reduction of the quadratic model 
     model_reduction = dot(g,s) + 0.5*vthv(H,s)
-    verbose && println("[inner_step] model reduction: $model_reduction, step: $s")
     return s, model_reduction, fix_bounds, chol_aug_aat
 end
 
@@ -817,7 +837,6 @@ function update_tr(
     else # successful step 
         delta 
     end
-    verbose && println("[update_tr] radius: $delta, next radius: $delta_next")
     return delta_next
 end
 
