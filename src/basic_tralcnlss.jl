@@ -1,7 +1,7 @@
 export tralcnllss
 
-const verbose = true
-const output_file_name = "../test/output/benlsip.out"
+const verbose = false
+const output_file_name = "../test/benlsip.out"
 abstract type TralcnllsData end
 
 mutable struct AlHessian{T<:Real} <: TralcnllsData
