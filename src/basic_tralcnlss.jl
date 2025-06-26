@@ -180,7 +180,7 @@ function tralcnllss(
     omega0::T = T(1),
     eta0::T = T(1),
     feas_tol::T = sqrt(eps(T)),
-    crit_tol::T = sqrt(eps(T)),
+    crit_tol::T = T(1e-6),
     k_crit::T = T(1),
     k_feas::T = T(0.1),
     beta_crit::T = T(1),

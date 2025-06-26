@@ -49,7 +49,7 @@ verbose = false
     @test Hx ≈ greedy_Hx
     @test xtHx ≈ greedy_xtHx
 end
-@testset "Intermediate methods" begin
+@testset "Test on Claude problem" begin
    
     x_sol, y_sol = tralcnllss(x0,
     r,
