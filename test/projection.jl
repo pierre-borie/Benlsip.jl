@@ -2,7 +2,7 @@
     
     # Feasibe set of problem 48 from Hock Schittkowski collection
     
-    (m,n) = (1,5)
+    (m,n) = (2,5)
     A = [1.0 1 1 1 1;
     0 0 1 -2 -2]
     b = [5.0, -3]

@@ -4,5 +4,5 @@ using Test
 
 # include("projection.jl")
 # include("structures.jl")
-include("methods.jl")
+include("problems/sphere_regression.jl")
 

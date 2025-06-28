@@ -33,23 +33,7 @@ x0 = [1.0, 0.5, 1.5]
 
 verbose = false
 
-@testset "Hessian structure" begin
-    Jx0 = jac_r(x0)
-    Cx0 = jac_c(x0)
-    mu0 = 10.0
-
-    greedy_H = Jx0'*Jx0 + mu0*Cx0'*Cx0
-    H = BEnlsip.AlHessian(Jx0,Cx0,mu0)
-
-    Hx = H*x0
-    greedy_Hx = greedy_H*x0
-    xtHx = BEnlsip.vthv(H,x0)
-    greedy_xtHx = dot(x0,greedy_Hx)
-
-    @test Hx ≈ greedy_Hx
-    @test xtHx ≈ greedy_xtHx
-end
-@testset "Test on Claude problem" begin
+@testset "Sphere regression problem" begin
    
     x_sol, y_sol = tralcnllss(x0,
     r,

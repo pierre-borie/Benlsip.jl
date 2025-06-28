@@ -97,7 +97,8 @@ end
 
 # Projections methods
 
-function projection!(v::Vector{T}, 
+function projection!(
+    v::Vector{T}, 
     A::Matrix{T}, 
     chol_aat::Cholesky{T,Matrix{T}}, 
     r::Vector{T}) where T

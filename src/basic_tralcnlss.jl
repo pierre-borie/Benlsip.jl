@@ -717,7 +717,7 @@ function projected_cg(
 
     iter = 1
     max_iter = 2*(n-m-count(fix_bounds))
-    approx_solved = false 
+    approx_solved = abs(rtv) < tol_cg
     neg_curvature = false
     outside_region = false
 
@@ -735,7 +735,6 @@ function projected_cg(
         else
             rtv = dot(r,v)
             alpha = rtv / pHp
-
             gamma = factor_to_boundary(p,w,w_l,w_u)
             outside_region = alpha > gamma
             if outside_region
