@@ -1,8 +1,7 @@
 export tralcnllss
 
-const verbose = false
+const verbose = true
 const output_file_name = "../test/benlsip.out"
-abstract type TralcnllsData end
 
 mutable struct AlHessian{T<:Real} <: TralcnllsData
     J::Matrix{T}
@@ -180,7 +179,7 @@ function tralcnllss(
     omega0::T = T(1),
     eta0::T = T(1),
     feas_tol::T = sqrt(eps(T)),
-    crit_tol::T = T(1e-6),
+    crit_tol::T = sqrt(eps(T)),
     k_crit::T = T(1),
     k_feas::T = T(0.1),
     beta_crit::T = T(1),
@@ -717,7 +716,8 @@ function projected_cg(
 
     iter = 1
     max_iter = 2*(n-m-count(fix_bounds))
-    approx_solved = abs(rtv) < tol_cg
+    # approx_solved = abs(rtv) < tol_cg
+    approx_solved = false
     neg_curvature = false
     outside_region = false
 

@@ -7,3 +7,4 @@
 
 # VS-code specific files
 .vscode/*
+*.out
