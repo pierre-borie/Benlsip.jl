@@ -25,7 +25,7 @@ test_cons = BEnlsip.MixedConstraints(A,chol_aat; l=xlow,u=xupp)
 
 act = [2,4,6]
 test_cons.fixvars[act] .= true
-update_chol!(test_cons, chol_aat)
+BEnlsip.update_chol!(test_cons, chol_aat)
 
 B = vcat(A,Matrix{Float64}(I,n,n)[act,:])
 greedy_L = cholesky(B*B').L
