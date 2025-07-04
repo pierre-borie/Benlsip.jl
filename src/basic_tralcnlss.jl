@@ -14,19 +14,19 @@ end
 """
     new_point(x,y,mu,residuals,nlconstraints,jac_res,jac_nlcons)
 
-Methods 'new_point' evaluate at 'x' and return the following 
+Methods `new_point` evaluate at `x` and return the following 
 
-* residuals 'rx'
+* residuals `rx`
 
-* nonlinear constraints 'cx' 
+* nonlinear constraints `cx` 
 
-* first-order estimate of the multipliers 'y_bar'
+* first-order estimate of the multipliers `y_bar`
 
-* value of the augmented Lagrangian function 'mx'
+* value of the augmented Lagrangian function `mx`
 
-* gradient 'g' of the augmented Lagrangian
+* gradient `g` of the augmented Lagrangian
 
-* Gauss-Newton approximmation of the Hessian 'H' of the augmented Lagrangian encoded in [`AlHessian`](@ref) type
+* Gauss-Newton approximmation of the Hessian `H` of the augmented Lagrangian encoded in [`AlHessian`](@ref) type
 """
 
 function new_point(
@@ -86,7 +86,7 @@ end
 
 """ vthv(H,v)
 
-The quadratic term 'vᵀHv' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian encoded into
+The quadratic term `vᵀHv` where `H = JᵀJ + μCᵀC` is the Gauss-Newton approximation of the augmented Lagrangian Hessian encoded into
 the [`AlHessian`](@ref) type.
 """
 function vthv(H::AlHessian{T}, v::Vector{T}) where T
@@ -97,7 +97,7 @@ end
 
 """ Base.:*(H::AlHessian, v::Vector)
 
-Overload the '*' operator to be compatible with the type [`AlHessian`](@ref).
+Overload the `*` operator to be compatible with the type [`AlHessian`](@ref).
 """
 function Base.:*(H::AlHessian{T}, v::Vector{T}) where T
     Jv = H.J*v 
@@ -109,7 +109,7 @@ end
 
 """ s_inner_hs(s,mu,J,C)
 
-Evaluate at 's' the quadratic term 'sᵀHs' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
+Evaluate at `s` the quadratic term `sᵀHs` where `H = JᵀJ + μCᵀC` is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
 """
 function s_inner_hs(
     s::Vector{T},
@@ -124,7 +124,7 @@ end
 
 """ hs(s,mu,J,C)
 
-Evaluate at 's' the matrix-vector product 'Hs' where 'H = JᵀJ + μCᵀC' is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
+Evaluate at `s` the matrix-vector product `Hs` where `H = JᵀJ + μCᵀC` is the Gauss-Newton approximation of the augmented Lagrangian Hessian.
 """
 function hs(
     s::Vector,
@@ -203,7 +203,7 @@ function tralcnllss(
     
     # Initializations
     (m,n) = size(A)
-    chol_aat = cholesky_aat(A) # Cholesky decomposition of AAᵀ
+    chol_aat = cholesky(A*A') # Cholesky decomposition of AAᵀ
     x = Vector{T}(undef,n)
     x[:] = x0[:]
     rx = residuals(x)
@@ -228,6 +228,7 @@ function tralcnllss(
 
     omega, eta = initial_tolerances(mu0, omega0, eta0, k_crit, k_feas) # tolerances 
     y = least_squares_multipliers(x,residuals,jac_res,jac_nlcons) # Initial Lagrange multipliers 
+    polyhedron = MixedConstraints(A,chol_aat;l=x_l,u=x_u) # representation of pohydral constraints
     # println("initial multipiers ", y)
 
     first_order_critical = false
@@ -253,11 +254,8 @@ function tralcnllss(
             nlconstraints,
             jac_res,
             jac_nlcons,
-            A,
             chol_aat,
-            b,
-            x_l,
-            x_u,
+            polyhedron,
             max_minor_iter,
             max_inner_iter,
             omega,
@@ -265,8 +263,6 @@ function tralcnllss(
             eta2,
             gamma1,
             gamma2,
-            gamma_c,
-            kappa1,
             kappa2,
             kappa3;
             output_file=output_file)
@@ -312,11 +308,8 @@ function solve_subproblem(
     nlconstraints::F2,
     jac_res::F3,
     jac_nlcons::F4,
-    A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}},
-    b::Vector{T},
-    x_l::Vector{T},
-    x_u::Vector{T},
+    lincons::MixedConstraints{T},
     nb_minor_step::Int,
     k_max::Int,
     omega_tol::T,
@@ -324,8 +317,6 @@ function solve_subproblem(
     eta2::T,
     gamma1::T,
     gamma2::T,
-    gamma_c::T,
-    kappa1::T,
     kappa2::T,
     kappa3::T;
     output_file::IO=stdout) where {T<:Real, F1<:Function, F2<:Function, F3<:Function, F4<:Function}
@@ -335,27 +326,32 @@ function solve_subproblem(
 
     # Dimensions
 
-    
-    (_,n) = size(A)
+    (_,n) = size(lincons.lineq)
     x = Vector{T}(undef,n)
     x[:] = x0[:]
-    rx, cx, y_bar, mx, g, H = new_point(x0, y, mu, residuals, nlconstraints, jac_res, jac_nlcons) 
+    rx, cx, y_bar, mx, g, H = new_point(x0,y,mu,residuals,nlconstraints,jac_res,jac_nlcons) 
 
     pix = Inf
-    t = T(1)
     delta = initial_tr(g)
     k = 1
     solved = false
     
     while !solved && k <= k_max
         # step and model reduction
-        s, pred, fix_bounds, chol_aug_aat = inner_step(x,g,H,A,chol_aat,b,x_l,x_u,delta,t,nb_minor_step,kappa1,kappa2,kappa3,gamma_c)
+        s, pred = inner_step(x,
+        g,
+        H,
+        chol_aat,
+        lincons,
+        delta,
+        nb_minor_step,
+        kappa2,
+        kappa3)
 
         x_next = x+s
-        rx_next, cx_next, mx_next = evaluate_al(x_next, y, mu, residuals, nlconstraints)
+        rx_next, cx_next, mx_next = evaluate_al(x_next,y,mu,residuals,nlconstraints)
         ared = mx_next - mx
         rho = ared / pred
-
 
         verbose && print_inner_iter(k,mx,norm(s),delta,rho;io=output_file)
 
@@ -370,7 +366,7 @@ function solve_subproblem(
         delta = update_tr(delta, rho, eta1, eta2, gamma1, gamma2)
 
         # Compute criticality measure
-        pix = criticality_measure(g,fix_bounds,A,chol_aug_aat)
+        pix = criticality_measure(g,lincons)
         #pix = criticality_measure(x,g,A,b,x_l,x_u)
         
         # Termination criteria 
@@ -383,52 +379,50 @@ end
 
 """ inner_step(x,g,H,A,chol_AAᵀ,b,xₗ,xᵤ,Δ,nb_minor_step,κ₀,κ₂,κ₃,γc)
 
-Starting from the current iterate 'x', compute a step 's' such that the inner step 'x+s' sufficiently reduces the model.
+Starting from the current iterate `x`, compute a step `s` such that the inner step `x+s` sufficiently reduces the model.
 
 On return 
 
-* the step 's'
+* the step `s`
 
-* the scalar 't_c' used to compute the Cauchy point 
+* the scalar `t_c` used to compute the Cauchy point 
 
-* the reduction predicted by the model with step 's'
+* the reduction predicted by the model with step `s`
 
-* indices of acitve bounds encoded in a 'BitVector' and the associated Cholesky decomposition
+* indices of acitve bounds encoded in a `BitVector` and the associated Cholesky decomposition
 """
 function inner_step(
     x::Vector{T},
     g::Vector{T},
     H::AlHessian{T},
-    A::Matrix{T},
     chol_aat::Cholesky{T,Matrix{T}},
-    b::Vector{T},
-    x_l::Vector{T},
-    x_u::Vector{T},
+    lincons::MixedConstraints{T},
     delta::T,
-    t0::T,
     nb_minor_step::Int,
-    kappa1::T,
     kappa2::T,
     kappa3::T,
-    gamma_c::T) where T
+    ) where T
 
-    (m,n) = size(A)
+    (m,n) = size(lincons.lineq)
 
     # s, t_c = cauchy_step(x,g,H,A,b,x_l,x_u,delta,t0,kappa1,gamma_c)
-    s, fix_bounds = cauchy_step(x,g,H,A,chol_aat,x_l,x_u,delta)
+    # s, fix_bounds = cauchy_step(x,g,H,A,chol_aat,x_l,x_u,delta)
+    s = cauchy_step(x,g,H,chol_aat,lincons,delta)
 
     g_minor = H*s+g
-    chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+    # chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
     # fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat)
 
     j = 1 # minor iterations index
 
-    norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
-    norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
+    # norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+    # norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
+    norm_reduced_g = norm_reduced_gradient(g,lincons)
+    norm_reduced_g_minor = norm_reduced_gradient(g_minor,lincons)
 
     approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
 
-    allowed_minor_step = max(n-m-count(fix_bounds))
+    allowed_minor_step = max(n-m-nb_fix(lincons))
     max_minor_step = min(nb_minor_step, allowed_minor_step)
     cg_stop  = false
 
@@ -437,23 +431,32 @@ function inner_step(
         # println("[inner_step] minor iterate ", j)
 
         # descent direction and termination status of the cg iterations
-        w, cg_status = minor_iterate(x,s,g_minor,H,A,x_l,x_u,chol_aug_aat,fix_bounds,delta,kappa2)
-    
+        w, cg_status = minor_iterate(x,s,g_minor,H,lincons,delta,kappa2)
+        cg_stop = cg_status == negative_curvature
         s .+= w # cumulated step 
         g_minor = H*s+g
-        fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat) # New active set
+        # fix_bounds, chol_aug_aat = active_w_chol(s,x,x_l,x_u,delta,A,chol_aat) # New active set
+        active_indx = active_bounds(lincons,x,s,delta)
 
-        # Loop termination criteria
-        norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
-        norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
-        approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
-        cg_stop = cg_status == negative_curvature
+        if m+size(active_indx,1) <= n
+            add_active!(lincons,chol_aat,active_indx)
+            # Loop termination criteria
+            # norm_reduced_g = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
+            # norm_reduced_g_minor =  norm_reduced_gradient(g_minor,A,fix_bounds,chol_aug_aat)
+            norm_reduced_g = norm_reduced_gradient(g,lincons)
+            norm_reduced_g_minor = norm_reduced_gradient(g_minor,lincons)
+            approx_solved = norm_reduced_g_minor <= kappa3 * norm_reduced_g
+
+        else # small step in a small trust region
+            approx_solved = true
+            active_bounds!(lincons,x+s,chol_aat) # set the right active set 
+        end
         j += 1
     end
 
     # Evaluate the reduction of the quadratic model 
     model_reduction = dot(g,s) + 0.5*vthv(H,s)
-    return s, model_reduction, fix_bounds, chol_aug_aat
+    return s, model_reduction
 end
 
 function cauchy_step(
@@ -526,9 +529,9 @@ end
 
 """ next_breakpoint(d,s,dₗ,dᵤ,fix_bounds)
 
-Finds the smallest scalar 'θ' such that one component not in 'fix_bounds' of 's + θ*d' lies at one of the bounds 'dₗ' or 'dᵤ'.   
+Finds the smallest scalar `θ` such that one component not in `fix_bounds` of `s + θ*d` lies at one of the bounds `dₗ` or `dᵤ`.   
 
-Returns the scalar 'θ' and 'ind', the index of the component that becomes active.
+Returns the scalar `θ` and `ind`, the index of the component that becomes active.
 """
 function next_breakpoint(
         d::Vector{T},
@@ -560,26 +563,24 @@ end
 
 """ cauchy_step(x,g,H,A,chol_AAᵀ,xₗ,xᵤ,Δ)
 
-Compute a Cauchy step that provides a sufficient reduction of the quadratic model 'q(s) = <s,Hs> + <g,s>'.
+Compute a Cauchy step that provides a sufficient reduction of the quadratic model `q(s) = <s,Hs> + <g,s>`.
 
-The step is defined by 's_c = s(t_c)' , where 's(t)', for 't ≥ 0', is the projected gradient step 'P(x-t*g) - x' with 'P' denoting the projection over '{v | Av = 0 and max(-Δ,xₗ) ≤ x + v ≤ min(Δ,xᵤ)}.
+The step is defined by `s_c = s(t_c)` , where `s(t)`, for `t ≥ 0`, is the projected gradient step `P(x-t*g) - x` with `P` denoting the projection over `{v | Av = 0 and max(-Δ,xₗ) ≤ x + v ≤ min(Δ,xᵤ)}.
 
-This method finds the first local minimum of the quadratic model along the projected gradient path, i.e. the first local minimum of 't ↦ q(s(t))' on '[0, ∞)'.
+This method finds the first local minimum of the quadratic model along the projected gradient path, i.e. the first local minimum of `t ↦ q(s(t))` on `[0, ∞)`.
 
-Returns the associated Cauchy step 's_c' and 'fix_bounds', a 'BitVector' encoding the indices of active bounds at 'x + s_c' 
+Returns the associated Cauchy step `s_c` and `fix_bounds`, a `BitVector` encoding the indices of active bounds at `x + s_c` 
 """
 function cauchy_step(
         x::Vector{T},
         g::Vector{T},
         H::AlHessian,
-        A::Matrix{T},
         chol_aat::Cholesky{T,Matrix{T}},
-        x_l::Vector{T},
-        x_u::Vector{T},
+        lincons::MixedConstraints{T},
         delta::T) where T
 
     # Dimensions and constants
-    (m,n) = size(A)
+    (m,n) = size(lincons.lineq)
     nmm = n-m
     atol = sqrt(eps(T))
     # Buffers
@@ -587,17 +588,19 @@ function cauchy_step(
     t = zero(T) # scalar to store breakpoint value
 
     # Initial active bounds
-    d = projection(A,chol_aat,-g)
-    fix_bounds = BitVector(map(t -> abs(t) < atol, d))
+    active_bounds!(lincons,x,chol_aat)
+    d = projection(lincons,-g)
+    # d = projection(A,chol_aat,-g)
+    # fix_bounds = BitVector(map(t -> abs(t) < atol, d))
     
-    if any(fix_bounds)
-        chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
-        projection!(d,A,chol_aug_aat,fix_bounds,-g)
-    end
+    # if any(fix_bounds)
+    #     chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+    #     projection!(d,A,chol_aug_aat,fix_bounds,-g)
+    # end
   
     # Upper and lower bounds for the Cauchy step
-    d_u = (t -> min(t, delta)).(x_u-x)
-    d_l = (t -> max(t, -delta)).(x_l-x)
+    d_u = (t -> min(t, delta)).(lincons.xupp-x)
+    d_l = (t -> max(t, -delta)).(lincons.xlow-x)
     
     # slope and curvature on the current interval
     # chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
@@ -609,9 +612,9 @@ function cauchy_step(
     
     min_found = false
 
-    while !min_found && (count(fix_bounds) < nmm)
+    while !min_found && (nb_fix(lincons) < nmm)
         
-        theta, ind = next_breakpoint(d,s_c,d_l,d_u,fix_bounds)
+        theta, ind = next_breakpoint(d,s_c,d_l,d_u,lincons.fixvars)
         delta_t = (phi_pp > 0 ? -phi_p / phi_pp : zero(T))
 
         if phi_p >= 0 # local minimum at t
@@ -623,52 +626,48 @@ function cauchy_step(
             min_found = true
         else # no local minimum in [t, t+theta), prepare for the next interval 
             s_c[:] += theta*d[:]
-            fix_bounds[ind] = true
-            chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
-            projection!(d,A, chol_aug_aat, fix_bounds, -g)
+            # fix_bounds[ind] = true
+            # chol_aug_aat = cholesky_aug_aat(A,fix_bounds,chol_aat)
+            add_active!(lincons,chol_aat,ind)
+            projection!(lincons,-g,d)
             Hd[:] = H*d
             phi_p = dot(s_c,Hd) + dot(g,d)
             phi_pp = dot(d,Hd)
         end
     end
-    return s_c, fix_bounds
+    return s_c
 end
 
 """ minor_iterate(x,s,g,H,A,xₗ,xᵤ,fixed_var,Δ,κ₂)
 
-Compute a search direction 'w' and a steplength 'α' such that the next minor iterate 'x + s + α*w' provides a sufficient reduction, where
+Compute a search direction `w` and a steplength `α` such that the next minor iterate `x + s + α*w` provides a sufficient reduction, where
 
-* 'x' is the current iterate 
+* `x` is the current iterate 
 
-* 's' is the previous minor step or, equivalently, 'x + s' is the previous minor iterate
+* `s` is the previous minor step or, equivalently, `x + s` is the previous minor iterate
 """
 function minor_iterate(
     x::Vector{T},
     s::Vector{T},
     g_model::Vector{T},
     H::AlHessian{T},
-    A::Matrix{T},
-    x_l::Vector{T},
-    x_u::Vector{T},
-    chol_aug_aat::Cholesky{T,Matrix{T}},
-    fixed_var::BitVector,
+    lincons::MixedConstraints{T},
     delta::T,
     kappa2::T) where T
 
     n = size(x,1)
 
     x_minor = x+s
-    # g_model = H*s + g
-    free_var = free_index(fixed_var)
+    # free_var = free_index(fixed_var)
     w_u, w_l = fill(Inf,n), fill(-Inf,n)
 
-    w_u[free_var] .= (t -> min(t, delta)).(x_u[free_var]-x_minor[free_var])
-    w_l[free_var] .= (t -> max(t, -delta)).(x_l[free_var]-x_minor[free_var])
+    w_u[lincons.fixvars] .= (t -> min(t, delta)).(lincons.xupp[lincons.fixvars]-x_minor[lincons.fixvars])
+    w_l[lincons.fixvars] .= (t -> max(t, -delta)).(lincons.xlow[lincons.fixvars]-x_minor[lincons.fixvars])
 
-    w, cg_status = projected_cg(g_model, H, A, w_l, w_u, chol_aug_aat, fixed_var, kappa2)
+    w, cg_status = projected_cg(g_model,H,w_l,w_u,lincons,kappa2)
 
     if cg_status != negative_curvature
-        alpha = linesearch(g_model, H, w, w_l, w_u, fixed_var)
+        alpha = linesearch(g_model,H,w,w_l,w_u,lincons.fixvars)
         w .= alpha * w
     end
 
@@ -679,35 +678,32 @@ end
 
 Approximately solve the sub problem 
 
-min 0.5 wᵀHw + wᵀr0 
-s.t. Aw = 0
+`min 0.5 wᵀHw + wᵀr0 
+s.t. Aw = 0,
      wᵢ = 0,    i ∈ fix_bounds
-     wₗ ≤ w ≤ wᵤ
+     wₗ ≤ w ≤ wᵤ,`
 
-with respect to 'w' and using the projected conjugate gradient method with early termination if a direction hits a bound.
+with respect to `w` and using the projected conjugate gradient method with early termination if a direction hits a bound.
 
-Returns the obtained descent direction and the termination status, encoded in the 'Enum' [`CG_status`](@ref)
+Returns the obtained descent direction and the termination status, encoded in the `Enum` (see [`CG_status`](@ref))
 """
-
 function projected_cg(
     g_minor::Vector{T},
     H::AlHessian{T},
-    A::Matrix{T},
     w_l::Vector{T},
     w_u::Vector{T},
-    chol_aug_aat::Cholesky{T,Matrix{T}},
-    fix_bounds::BitVector,
+    lincons::MixedConstraints{T},
     kappa2::T;
     atol::T = sqrt(eps(T))) where T
 
-    (m,n) = size(A)
+    (m,n) = size(lincons.lineq)
     
     # Initialization
     w = zeros(n)
     r = zeros(n)
     # r = H*s + g
     r[:] = g_minor[:]
-    v = projection(A,chol_aug_aat,fix_bounds,r)
+    v = projection(lincons,r)
     rtv = dot(r,v)
     p = -v
 
@@ -715,7 +711,7 @@ function projected_cg(
     tol_negcurve = atol
 
     iter = 1
-    max_iter = 2*(n-m-count(fix_bounds))
+    max_iter = 2*(n-m-nb_fix(lincons))
     # approx_solved = abs(rtv) < tol_cg
     approx_solved = false
     neg_curvature = false
@@ -742,7 +738,8 @@ function projected_cg(
             else 
                 w .+= alpha*p
                 r .+= alpha*Hp
-                v = projection(A,chol_aug_aat,fix_bounds,r)
+                projection!(lincons,r,v)
+                # v = projection(A,chol_aug_aat,fix_bounds,r)
                 rtv_next = dot(r,v)
                 beta = rtv_next / rtv
                 axpby!(-one(T), v, beta, p) # p = -v + βp
@@ -813,9 +810,9 @@ end
 
 """ initial_tr(g; factor)
 
-Computes the initial trust region radius by taking a factor of the norm of 'g', the gradient of the model.
+Computes the initial trust region radius by taking a factor of the norm of `g`, the gradient of the model.
 
-Returns 'factor * ||g||' with 'factor' default value set to '0.1'.
+Returns `factor * ||g||` with `factor` default value set to `0.1`.
 """
 function initial_tr(g::Vector{T};tr_factor::T=T(0.1)) where T
     return tr_factor * norm(g)
@@ -841,17 +838,9 @@ end
 
 function criticality_measure(
     g::Vector{T},
-    fix_bounds::BitVector,
-    A::Matrix{T},
-    chol_aug_aat::Cholesky{T, Matrix{T}}) where T 
+    lincons::MixedConstraints{T}) where T 
 
-    if any(fix_bounds)
-        crit = norm_reduced_gradient(g,A,fix_bounds,chol_aug_aat)
-    else
-        crit = norm_reduced_gradient(g,A,chol_aug_aat)
-    end
-
-    return crit
+    return norm_reduced_gradient(g,lincons)
 end
 
 #= Compute the criticality measure ||P(x-∇f)-x|| where P[.] denotes the orthogonal projection on {x | Ax=b, xₗ ≤ x ≤ xᵤ}
@@ -870,32 +859,30 @@ function criticality_measure(
     return norm(p_xmg-x)
 end
 
-#= Return the norm of the reduced gradient 'Ñᵀg'
+#= Return the norm of the reduced gradient `Ñᵀg`
     
-    * 'g' is the gradient of the augmented Lagrangian at current iterate
+    * `g` is the gradient of the augmented Lagrangian at current iterate
 
-    * 'Ñ' is an orthonormal matrix representing the null space of current active linear constraints
+    * `Ñ` is an orthonormal matrix representing the null space of current active linear constraints
 
 =#
 function norm_reduced_gradient(
     g::Vector{T},
-    A::Matrix{T},
-    fix_bounds::BitVector,
-    chol_aug_aat::Cholesky{T,Matrix{T}}) where T
+    polyhedron::MixedConstraints) where T
 
-    reduced_g = projection(A,chol_aug_aat,fix_bounds,-g)
+    reduced_g = projection(polyhedron,-g)
     return norm(reduced_g)
 end
 
 
-function norm_reduced_gradient(
-    g::Vector{T},
-    A::Matrix{T},
-    chol_aat::Cholesky{T,Matrix{T}}) where T
+# function norm_reduced_gradient(
+#     g::Vector{T},
+#     A::Matrix{T},
+#     chol_aat::Cholesky{T,Matrix{T}}) where T
 
-    reduced_g = projection(A,chol_aat,-g)
-    return norm(reduced_g)
-end
+#     reduced_g = projection(A,chol_aat,-g)
+#     return norm(reduced_g)
+# end
 
 function least_squares_multipliers(
     x::Vector{T},
